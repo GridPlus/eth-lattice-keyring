@@ -47,33 +47,52 @@ class LatticeKeyring extends EventEmitter {
     if (this.isUnlocked()) 
       return Promise.resolve()
     return new Promise((resolve, reject) => {
-      this._start(resolve, reject)
+      this._createSession(resolve, reject)
       .then(() => {
         // Get the first address
         return this._getAddress()
       })
-      .then(() => { resolve(); })
-      .catch((err) => { return reject(err); })
+      .then(() => { 
+        resolve(); 
+      })
+      .catch((err) => { 
+        return reject(err); 
+      })
     })
   }
 
   addAccounts(n=1) {
     if (n > 10) 
       return Promise.reject('Only up to 10 accounts may be added at once.')
-    if (!this._isSetup())
-      return Promise.reject('SDK is not connected. Please reconnect.')
+    if (!this._hasSession())
+      return Promise.reject('addAccounts: SDK is not connected. Please reconnect.')
     return new Promise((resolve, reject) => {
       const i = this.accounts[this.walletUID].length;
       this._getAddress(n, i)
-      .then(() => { return resolve(); })
-      .catch((err) => { return reject(err); })
+      .then(() => { 
+        return resolve(); 
+      })
+      .catch((err) => { 
+        return reject(err); 
+      })
     })
   }
 
   getAccounts() {
-    if (!this._isSetup())
-      return Promise.reject('SDK is not connected. Please reconnect.')
-    return resolve(this.accounts[this.walletUID]);
+    return new Promise((resolve, reject) => {
+      // If we already have an established connection, return the
+      // addresses associated with the current walletUID
+      if (this._hasSession())
+        return resolve(this.accounts[this.walletUID]);
+      // If we do not have a session, we need to create one
+      this._createSession()
+      .then(() => {
+        return resolve(this.accounts[this.walletUID]);
+      })
+      .catch((err) => {
+        return reject(err);
+      })
+    })
   }
 
   signTransaction(address, transaction) { 
@@ -95,7 +114,7 @@ class LatticeKeyring extends EventEmitter {
   //-------------------------------------------------------------------
   // Internal methods and interface to SDK
   //-------------------------------------------------------------------
-  _start() {
+  _createSession() {
     return new Promise((resolve, reject) => {
       // We only need to setup if we don't have a deviceID
       if (this._hasCreds())
@@ -153,7 +172,7 @@ class LatticeKeyring extends EventEmitter {
 
   _getAddress(n=1, i=0) {
     return new Promise((resolve, reject) => {
-      if (!this._isSetup())
+      if (!this._hasSession())
         return reject('No SDK session started. Cannot fetch addresses.')
       const accounts = this.accounts[this.walletUID];
       if (i > accounts.length)
@@ -188,7 +207,7 @@ class LatticeKeyring extends EventEmitter {
     return this.creds.deviceID !== null && this.creds.password !== null;
   }
 
-  _isSetup() {
+  _hasSession() {
     return this.sdkSession && this.walletUID
   }
 
