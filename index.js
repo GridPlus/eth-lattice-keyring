@@ -20,6 +20,7 @@ class LatticeKeyring extends EventEmitter {
     this.walletUID = null;
     this.sdkSession = null;
     this.page = 0;
+    this.unlockedAccount = 0;
     this.deserialize(opts);
   }
 
@@ -67,20 +68,8 @@ class LatticeKeyring extends EventEmitter {
   }
 
   addAccounts(n=1) {
-    if (n > 10) 
-      return Promise.reject('Only up to 10 accounts may be added at once.')
-    if (!this._hasSession())
-      return Promise.reject('addAccounts: SDK is not connected. Please reconnect.')
-    return new Promise((resolve, reject) => {
-      const i = this.accounts[this.walletUID].length;
-      this._getAddress(n, i)
-      .then(() => { 
-        return resolve(); 
-      })
-      .catch((err) => { 
-        return reject(err); 
-      })
-    })
+    // V1: Only return the first account
+    return this.getFirstPage()
   }
 
   getAccounts() {
@@ -129,6 +118,10 @@ class LatticeKeyring extends EventEmitter {
   getPreviousPage () {
     return Promise.reject(Error('Device only supports one account per wallet at this time.'))
     // return this._getPage(-1)
+  }
+
+  setAccountToUnlock (index) {
+    this.unlockedAccount = parseInt(index, 10)
   }
 
   //-------------------------------------------------------------------
