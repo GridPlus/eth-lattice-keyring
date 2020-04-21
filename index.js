@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const EventEmitter = require('events').EventEmitter;
 const SDK = require('gridplus-sdk');
 const keyringType = 'GridPlus Lattice';
-const CONNECT_URL = 'https://wallet.gridplus.io';
+const CONNECT_URL = 'http://localhost:5000';
 const SIGNING_URL = 'https://signing.staging-gridpl.us';
 const HARDENED_OFFSET = 0x80000000;
 
@@ -18,7 +18,7 @@ class LatticeKeyring extends EventEmitter {
     };
     this.walletUID = null;
     this.sdkSession = null;
-    this.deserialize(opts)
+    this.deserialize(opts);
   }
 
   //-------------------------------------------------------------------
@@ -46,19 +46,7 @@ class LatticeKeyring extends EventEmitter {
   unlock() {
     if (this.isUnlocked()) 
       return Promise.resolve()
-    return new Promise((resolve, reject) => {
-      this._createSession(resolve, reject)
-      .then(() => {
-        // Get the first address
-        return this._getAddress()
-      })
-      .then(() => { 
-        resolve(); 
-      })
-      .catch((err) => { 
-        return reject(err); 
-      })
-    })
+    return Promise.reject(Error('unlock not yet supported'))
   }
 
   addAccounts(n=1) {
@@ -85,7 +73,14 @@ class LatticeKeyring extends EventEmitter {
       if (this._hasSession())
         return resolve(this.accounts[this.walletUID]);
       // If we do not have a session, we need to create one
-      this._createSession()
+      this._getCreds()
+      .then((creds) => {
+        if (creds) {
+          this.creds.deviceID = creds.deviceID;
+          this.creds.password = creds.password;
+        }
+        return this._initSession();
+      })
       .then(() => {
         return resolve(this.accounts[this.walletUID]);
       })
@@ -96,25 +91,29 @@ class LatticeKeyring extends EventEmitter {
   }
 
   signTransaction(address, transaction) { 
-    return reject('Not yet implemented')
+    return Promise.reject(Error('signTransaction not yet implemented'))
   }
 
   signMessage(address, data) {
-    return reject('Not yet implemented')
+    return Promise.reject(Error('signMessage not yet implemented'))  
   }
 
   exportAccount(address) {
-    return reject('Not supported by this device')
+    return Promise.reject(Error('exportAccount not supported by this device'))
   }
 
   removeAccount(address) {
-    return reject('Not yet implemented')
+    return Promise.reject(Error('removeAccount not yet implemented'))
+  }
+
+  getFirstPage() {
+    return Promise.reject(Error('getFirstPage not yet implemented'))
   }
 
   //-------------------------------------------------------------------
   // Internal methods and interface to SDK
   //-------------------------------------------------------------------
-  _createSession() {
+  _getCreds() {
     return new Promise((resolve, reject) => {
       // We only need to setup if we don't have a deviceID
       if (this._hasCreds())
@@ -124,7 +123,8 @@ class LatticeKeyring extends EventEmitter {
       // we need to open a window that lets the user go through the
       // pairing or connection process.
       const popup = window.open(`${CONNECT_URL}?keyring=true`);
-      popup.postMessage('REQ_CREDS');
+      popup.postMessage('GET_LATTICE_CREDS', CONNECT_URL);
+
       // PostMessage handler
       function receiveMessage(event) {
         // Ensure origin
@@ -133,9 +133,9 @@ class LatticeKeyring extends EventEmitter {
         // Parse response data
         try {
           const data = JSON.parse(event.data);
-          this.creds.deviceID = data.deviceID;
-          this.creds.password = data.password;
-          this._initSession(resolve, reject);
+          if (!data.deviceID || !data.password)
+            return reject(Error('Invalid credentials returned from Lattice.'));
+          return resolve(data);
         } catch (err) {
           return reject(err);
         }
@@ -144,30 +144,34 @@ class LatticeKeyring extends EventEmitter {
     })
   }
 
-  _initSession(resolve, reject) {
-    try {
-      const setupData = {
-        name: 'Metamask',
-        baseUrl: SIGNING_URL,
-        crypto,
-        timeout: 120000,
-        privKey: this._genSessionKey(),
+  _initSession() {
+    return new Promise((resolve, reject) => {
+      try {
+        const setupData = {
+          name: 'Metamask',
+          baseUrl: SIGNING_URL,
+          crypto,
+          timeout: 120000,
+          privKey: this._genSessionKey(),
+        }
+        this.sdkSession = new SDK.Client(setupData);
+        // Connect to the device
+        this.sdkSession.connect(this.creds.deviceID, (err) => {
+          if (err)
+            return reject(Error(err));
+          // Save the current wallet UID
+          const activeWallet = this.sdkSession.getActiveWallet();
+          if (!activeWallet || !activeWallet.uid)
+            return reject(Error("No active wallet"));
+          this.walletUID = activeWallet.uid.toString('hex');
+          if (!this.accounts[this.walletUID])
+            this.accounts[this.walletUID] = [];
+          return resolve();
+        });
+      } catch (err) {
+        return reject(err);
       }
-      this.sdkSession = new SDK.Client(setup);
-      // Connect to the device
-      this.sdkSession.connect(this.creds.deviceID, (err) => {
-        if (err)
-          return reject(err);
-        // Save the current wallet UID
-        this.walletUID = getActiveWallet.uid.toString('hex');
-        if (!this.accounts[this.walletUID])
-          this.accounts[this.walletUID] = [];
-        return resolve();
-      });
-
-    } catch (err) {
-      return reject(err);
-    }
+    })
   }
 
   _getAddress(n=1, i=0) {
@@ -214,7 +218,7 @@ class LatticeKeyring extends EventEmitter {
   _genSessionKey() {
     if (!this._hasCreds())
       throw new Error('No credentials -- cannot create session key!');
-    const buf = Buffer.from(JSON.stringify(this.creds));
+    const buf = Buffer.concat([Buffer.from(this.creds.password), Buffer.from(this.creds.deviceID)])
     return crypto.createHash('sha256').update(buf).digest();
   }
 
