@@ -5,6 +5,7 @@ const keyringType = 'GridPlus Lattice';
 const CONNECT_URL = 'http://localhost:5000';
 const SIGNING_URL = 'https://signing.staging-gridpl.us';
 const HARDENED_OFFSET = 0x80000000;
+const PER_PAGE = 5;
 
 class LatticeKeyring extends EventEmitter {
   constructor (opts = {}) {
@@ -18,6 +19,7 @@ class LatticeKeyring extends EventEmitter {
     };
     this.walletUID = null;
     this.sdkSession = null;
+    this.page = 0;
     this.deserialize(opts);
   }
 
@@ -46,7 +48,22 @@ class LatticeKeyring extends EventEmitter {
   unlock() {
     if (this.isUnlocked()) 
       return Promise.resolve()
-    return Promise.reject(Error('unlock not yet supported'))
+    return new Promise((resolve, reject) => {
+      this._getCreds()
+      .then((creds) => {
+        if (creds) {
+          this.creds.deviceID = creds.deviceID;
+          this.creds.password = creds.password;
+        }
+        return this._initSession();
+      })
+      .then(() => {
+        return resolve();
+      })
+      .catch((err) => {
+        return reject(Error(`Error unlocking ${err}`));
+      })
+    })
   }
 
   addAccounts(n=1) {
@@ -73,14 +90,7 @@ class LatticeKeyring extends EventEmitter {
       if (this._hasSession())
         return resolve(this.accounts[this.walletUID]);
       // If we do not have a session, we need to create one
-      this._getCreds()
-      .then((creds) => {
-        if (creds) {
-          this.creds.deviceID = creds.deviceID;
-          this.creds.password = creds.password;
-        }
-        return this._initSession();
-      })
+      this.unlock()
       .then(() => {
         return resolve(this.accounts[this.walletUID]);
       })
@@ -107,7 +117,18 @@ class LatticeKeyring extends EventEmitter {
   }
 
   getFirstPage() {
-    return Promise.reject(Error('getFirstPage not yet implemented'))
+    this.page = 0;
+    return this._getPage(1);
+  }
+
+  getNextPage () {
+    return Promise.reject(Error('Device only supports one account per wallet at this time.'))
+    // return this._getPage(1)
+  }
+
+  getPreviousPage () {
+    return Promise.reject(Error('Device only supports one account per wallet at this time.'))
+    // return this._getPage(-1)
   }
 
   //-------------------------------------------------------------------
@@ -158,11 +179,11 @@ class LatticeKeyring extends EventEmitter {
         // Connect to the device
         this.sdkSession.connect(this.creds.deviceID, (err) => {
           if (err)
-            return reject(Error(err));
+            return reject(err);
           // Save the current wallet UID
           const activeWallet = this.sdkSession.getActiveWallet();
           if (!activeWallet || !activeWallet.uid)
-            return reject(Error("No active wallet"));
+            return reject("No active wallet");
           this.walletUID = activeWallet.uid.toString('hex');
           if (!this.accounts[this.walletUID])
             this.accounts[this.walletUID] = [];
@@ -184,7 +205,7 @@ class LatticeKeyring extends EventEmitter {
 
       // If we have already cached the address, we don't need to do it again
       if (accounts.length > i)
-        return resolve();
+        return resolve(accounts);
       
       // Make the request to get the requested address
       const addrData = { 
@@ -194,15 +215,53 @@ class LatticeKeyring extends EventEmitter {
       }
       this.sdkSession.getAddresses(addrData, (err, addrs) => {
         if (err)
-          return reject(err);
+          return reject(Error(`Error getting addresses: ${err}`));
         if (addrs.length < 1)
-          return reject('No addresses returned')
+          return reject(Error('No addresses returned'));
         if (i == accounts.length)
-          accounts.push(addrs[0])
+          accounts.concat(addrs)
         else
           accounts[i] = addrs[0]; // This should not be reachable, but just in case...
         
-        return resolve();
+        // return resolve(accounts);
+        return resolve(addrs)
+      })
+    })
+  }
+
+  _getPage(increment=1) {
+    return new Promise((resolve, reject) => {
+      this.page += increment;
+      if (this.page <= 0)
+        this.page = 1;
+      const start = PER_PAGE * (this.page - 1);
+      const to = PER_PAGE * this.page;
+
+      this.unlock()
+      .then(() => {
+        // If we already have the addresses, return them
+        if (this.accounts[this.walletUID].length >= to)
+          return resolve(this.accounts[this.walletUID].slice(start, to));
+        // Otherwise we need to fetch them
+        //-----------
+        // V1: We will only support export of one (the first) address
+        // return this._getAddress(PER_PAGE, start);
+        return this._getAddress(1, 0);
+        //-----------
+      })
+      .then((addrs) => {
+        const accounts = [];
+        addrs.forEach((addr, i) => {
+          accounts.push({
+            address: addr,
+            balance: null,
+            index: start + i,
+          })
+        })
+        return resolve(accounts);
+      })
+      .catch((err) => {
+        return reject(err);
       })
     })
   }
