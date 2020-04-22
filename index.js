@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const EventEmitter = require('events').EventEmitter;
 const SDK = require('gridplus-sdk');
-const keyringType = 'GridPlus Lattice';
+const keyringType = 'Lattice Hardware';
 const CONNECT_URL = 'http://localhost:5000';
 const SIGNING_URL = 'https://signing.staging-gridpl.us';
 const HARDENED_OFFSET = 0x80000000;
@@ -11,16 +11,7 @@ class LatticeKeyring extends EventEmitter {
   constructor (opts = {}) {
     super()
     this.type = keyringType
-    this.accounts = {}; // Addresses indexed on walletUID
-    this.isLocked = true;
-    this.creds = {
-      deviceID: null,
-      password: null,
-    };
-    this.walletUID = null;
-    this.sdkSession = null;
-    this.page = 0;
-    this.unlockedAccount = 0;
+    this._resetDefaults();
     this.deserialize(opts);
   }
 
@@ -31,19 +22,22 @@ class LatticeKeyring extends EventEmitter {
     if (opts.creds)
       this.creds = opts.creds;
     if (opts.accounts)
-      this.accounts = opts.accounts;
+      this.addresses = opts.accounts;
+    if (opts.walletUID)
+      this.walletUID = opts.walletUID;
     return Promise.resolve()
   }
 
   serialize() {
     return Promise.resolve({
       creds: this.creds,
-      accounts: this.accounts,
+      accounts: this.addresses,
+      walletUID: this.walletUID,
     })
   }
 
   isUnlocked () {
-    return this.isLocked === false;
+    return this._hasCreds() && this._hasSession()
   }
 
   unlock() {
@@ -59,7 +53,7 @@ class LatticeKeyring extends EventEmitter {
         return this._initSession();
       })
       .then(() => {
-        return resolve();
+        return resolve('Unlocked');
       })
       .catch((err) => {
         return reject(Error(`Error unlocking ${err}`));
@@ -68,25 +62,14 @@ class LatticeKeyring extends EventEmitter {
   }
 
   addAccounts(n=1) {
-    // V1: Only return the first account
-    return this.getFirstPage()
+    return this.__V1_getFirstAddress();
   }
 
   getAccounts() {
-    return new Promise((resolve, reject) => {
-      // If we already have an established connection, return the
-      // addresses associated with the current walletUID
-      if (this._hasSession())
-        return resolve(this.accounts[this.walletUID]);
-      // If we do not have a session, we need to create one
-      this.unlock()
-      .then(() => {
-        return resolve(this.accounts[this.walletUID]);
-      })
-      .catch((err) => {
-        return reject(err);
-      })
-    })
+    if (this.walletUID)
+      return Promise.resolve(this.addresses[this.walletUID] || [])
+    else
+      return Promise.resolve([])
   }
 
   signTransaction(address, transaction) { 
@@ -101,8 +84,13 @@ class LatticeKeyring extends EventEmitter {
     return Promise.reject(Error('exportAccount not supported by this device'))
   }
 
+  // V1: Only one account per walletUID, so we reset the array to empty in the
+  //    case of a match.
   removeAccount(address) {
-    return Promise.reject(Error('removeAccount not yet implemented'))
+    if (this.walletUID) {
+      if (this.addresses[this.walletUID][0].toLowerCase() === address.toLowerCase())
+        this.addresses[this.walletUID] = [];
+    }
   }
 
   getFirstPage() {
@@ -124,9 +112,47 @@ class LatticeKeyring extends EventEmitter {
     this.unlockedAccount = parseInt(index, 10)
   }
 
+  removeAccount(address) {
+    // V1: Remove only account
+    this.addresses[this.walletUID] = [];
+  }
+
+  forgetDevice () {
+    this._resetDefaults();
+  }
+
   //-------------------------------------------------------------------
   // Internal methods and interface to SDK
   //-------------------------------------------------------------------
+  // V1: Only return the first account
+  __V1_getFirstAddress() {
+    return new Promise((resolve, reject) => {
+      this.unlock()
+      .then(() => {
+        return this._getAddress(1, 0)
+      })
+      .then((addrs) => {
+        return resolve(addrs);
+      })
+      .catch((err) => {
+        return reject(err);
+      })
+    })
+  }
+
+  _resetDefaults() {
+    this.addresses = {};
+    this.isLocked = true;
+    this.creds = {
+      deviceID: null,
+      password: null,
+    };
+    this.walletUID = null;
+    this.sdkSession = null;
+    this.page = 0;
+    this.unlockedAccount = 0;
+  }
+
   _getCreds() {
     return new Promise((resolve, reject) => {
       // We only need to setup if we don't have a deviceID
@@ -172,14 +198,14 @@ class LatticeKeyring extends EventEmitter {
         // Connect to the device
         this.sdkSession.connect(this.creds.deviceID, (err) => {
           if (err)
-            return reject(err);
+            return reject(`(connect) ${err}`);
           // Save the current wallet UID
           const activeWallet = this.sdkSession.getActiveWallet();
           if (!activeWallet || !activeWallet.uid)
             return reject("No active wallet");
           this.walletUID = activeWallet.uid.toString('hex');
-          if (!this.accounts[this.walletUID])
-            this.accounts[this.walletUID] = [];
+          if (!this.addresses[this.walletUID])
+            this.addresses[this.walletUID] = [];
           return resolve();
         });
       } catch (err) {
@@ -192,13 +218,14 @@ class LatticeKeyring extends EventEmitter {
     return new Promise((resolve, reject) => {
       if (!this._hasSession())
         return reject('No SDK session started. Cannot fetch addresses.')
-      const accounts = this.accounts[this.walletUID];
-      if (i > accounts.length)
-        return reject(`Requested address is out of bounds. You may only request index <${this.accounts.length}`)
 
-      // If we have already cached the address, we don't need to do it again
-      if (accounts.length > i)
-        return resolve(accounts);
+      // The Lattice does not allow for us to skip indices.
+      if (i > this.addresses[this.walletUID].length)
+        return reject(`Requested address is out of bounds. You may only request index <${this.addresses.length}`)
+
+      // If we have already cached the address(es), we don't need to do it again
+      if (this.addresses[this.walletUID].length > i)
+        return resolve(this.addresses[this.walletUID].slice(i, n));
       
       // Make the request to get the requested address
       const addrData = { 
@@ -209,14 +236,17 @@ class LatticeKeyring extends EventEmitter {
       this.sdkSession.getAddresses(addrData, (err, addrs) => {
         if (err)
           return reject(Error(`Error getting addresses: ${err}`));
+        // Sanity check -- if this returned 0 addresses, handle the error
         if (addrs.length < 1)
-          return reject(Error('No addresses returned'));
-        if (i == accounts.length)
-          accounts.concat(addrs)
-        else
-          accounts[i] = addrs[0]; // This should not be reachable, but just in case...
+          return reject('No addresses returned');
+        // Add the address(es). This if statement should always get hit, as we do not
+        // allow skipping indices and would have returned addresses upstream if `i` were
+        // less than the array length
+        if (i == this.addresses[this.walletUID].length)
+          this.addresses[this.walletUID].concat(addrs)
         
-        // return resolve(accounts);
+        // Return only the addresses that were fetched by the Lattice, since that's what
+        // this API calls for
         return resolve(addrs)
       })
     })
@@ -232,26 +262,29 @@ class LatticeKeyring extends EventEmitter {
 
       this.unlock()
       .then(() => {
-        // If we already have the addresses, return them
-        if (this.accounts[this.walletUID].length >= to)
-          return resolve(this.accounts[this.walletUID].slice(start, to));
+        // V1: Disabled
+        // If we already have the addresses, use them them
+        // if (this.addresses[this.walletUID].length >= to)
+          // return Promise.resolve(this.addresses[this.walletUID].slice(start, to));
+        
         // Otherwise we need to fetch them
         //-----------
         // V1: We will only support export of one (the first) address
-        // return this._getAddress(PER_PAGE, start);
         return this._getAddress(1, 0);
+        // return this._getAddress(PER_PAGE, start);
         //-----------
       })
       .then((addrs) => {
-        const accounts = [];
+        // Build some account objects from the addresses
+        const localAccounts = [];
         addrs.forEach((addr, i) => {
-          accounts.push({
+          localAccounts.push({
             address: addr,
             balance: null,
             index: start + i,
           })
         })
-        return resolve(accounts);
+        return resolve(localAccounts);
       })
       .catch((err) => {
         return reject(err);
@@ -264,7 +297,7 @@ class LatticeKeyring extends EventEmitter {
   }
 
   _hasSession() {
-    return this.sdkSession && this.walletUID
+    return this.sdkSession && this.walletUID;
   }
 
   _genSessionKey() {
