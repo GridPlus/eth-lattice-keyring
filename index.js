@@ -112,11 +112,6 @@ class LatticeKeyring extends EventEmitter {
     this.unlockedAccount = parseInt(index, 10)
   }
 
-  removeAccount(address) {
-    // V1: Remove only account
-    this.addresses[this.walletUID] = [];
-  }
-
   forgetDevice () {
     this._resetDefaults();
   }
@@ -243,11 +238,9 @@ class LatticeKeyring extends EventEmitter {
         // allow skipping indices and would have returned addresses upstream if `i` were
         // less than the array length
         if (i == this.addresses[this.walletUID].length)
-          this.addresses[this.walletUID].concat(addrs)
+          this.addresses[this.walletUID] = this.addresses[this.walletUID].concat(addrs)
         
-        // Return only the addresses that were fetched by the Lattice, since that's what
-        // this API calls for
-        return resolve(addrs)
+        return resolve(this.addresses[this.walletUID])
       })
     })
   }
