@@ -62,14 +62,11 @@ class LatticeKeyring extends EventEmitter {
   }
 
   addAccounts(n=1) {
-    return this.__V1_getFirstAddress();
+    return this.__V1_getFirstAddress()
   }
 
   getAccounts() {
-    if (this.walletUID)
-      return Promise.resolve(this.addresses[this.walletUID] || [])
-    else
-      return Promise.resolve([])
+    return Promise.resolve(this.addresses[this.walletUID] || [])
   }
 
   signTransaction(address, transaction) { 
@@ -99,12 +96,12 @@ class LatticeKeyring extends EventEmitter {
   }
 
   getNextPage () {
-    return Promise.reject(Error('Device only supports one account per wallet at this time.'))
+    return this.getFirstPage();
     // return this._getPage(1)
   }
 
   getPreviousPage () {
-    return Promise.reject(Error('Device only supports one account per wallet at this time.'))
+    return this.getFirstPage();
     // return this._getPage(-1)
   }
 

@@ -17,6 +17,6 @@
   },
   "homepage": "https://github.com/GridPlus/eth-lattice-keyring#readme",
   "dependencies": {
-    "gridplus-sdk": "^0.4.6-dev"
+    "gridplus-sdk": "^0.4.7-dev"
   }
 }
