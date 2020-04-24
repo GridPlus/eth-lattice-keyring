@@ -40,6 +40,7 @@ class LatticeKeyring extends EventEmitter {
     return this._hasCreds() && this._hasSession()
   }
 
+  // Initialize a session with the Lattice1 device using the GridPlus SDK
   unlock() {
     if (this.isUnlocked()) 
       return Promise.resolve()
@@ -61,10 +62,30 @@ class LatticeKeyring extends EventEmitter {
     })
   }
 
+  // Add addresses to the local store and return the full result
   addAccounts(n=1) {
-    return this.__V1_getFirstAddress()
+    return new Promise((resolve, reject) => {
+      this.unlock()
+      .then(() => {
+        return this._fetchAddresses(n, this.unlockedAccount)
+      })
+      .then((addrs) => {
+        // Ensure we have an array to add to
+        if (this.walletUID && !this.addresses[this.walletUID])
+          this.addresses[this.walletUID] = [];
+        // If we have requested new address(es), add to the local store
+        if (this.addresses[this.walletUID].length === this.unlockedAccount)
+          this.addresses[this.walletUID] = this.addresses[this.walletUID].concat(addrs);
+        // Return the local store
+        return resolve(this.addresses[this.walletUID])
+      })
+      .catch((err) => {
+        return reject(err);
+      })
+    })
   }
 
+  // Return the local store of addresses
   getAccounts() {
     return Promise.resolve(this.addresses[this.walletUID] || [])
   }
@@ -81,12 +102,13 @@ class LatticeKeyring extends EventEmitter {
     return Promise.reject(Error('exportAccount not supported by this device'))
   }
 
-  // V1: Only one account per walletUID, so we reset the array to empty in the
-  //    case of a match.
   removeAccount(address) {
     if (this.walletUID) {
-      if (this.addresses[this.walletUID][0].toLowerCase() === address.toLowerCase())
-        this.addresses[this.walletUID] = [];
+      this.addresses[this.walletUID].forEach((storedAddr, i) => {
+        // If we have a match, splice out that address index
+        if (storedAddr.toLowerCase() === address.toLowerCase())
+          this.addresses[this.walletUID].splice(i, i+1)
+      })
     }
   }
 
@@ -116,22 +138,6 @@ class LatticeKeyring extends EventEmitter {
   //-------------------------------------------------------------------
   // Internal methods and interface to SDK
   //-------------------------------------------------------------------
-  // V1: Only return the first account
-  __V1_getFirstAddress() {
-    return new Promise((resolve, reject) => {
-      this.unlock()
-      .then(() => {
-        return this._getAddress(1, 0)
-      })
-      .then((addrs) => {
-        return resolve(addrs);
-      })
-      .catch((err) => {
-        return reject(err);
-      })
-    })
-  }
-
   _resetDefaults() {
     this.addresses = {};
     this.isLocked = true;
@@ -206,7 +212,7 @@ class LatticeKeyring extends EventEmitter {
     })
   }
 
-  _getAddress(n=1, i=0) {
+  _fetchAddresses(n=1, i=0) {
     return new Promise((resolve, reject) => {
       if (!this._hasSession())
         return reject('No SDK session started. Cannot fetch addresses.')
@@ -231,13 +237,8 @@ class LatticeKeyring extends EventEmitter {
         // Sanity check -- if this returned 0 addresses, handle the error
         if (addrs.length < 1)
           return reject('No addresses returned');
-        // Add the address(es). This if statement should always get hit, as we do not
-        // allow skipping indices and would have returned addresses upstream if `i` were
-        // less than the array length
-        if (i == this.addresses[this.walletUID].length)
-          this.addresses[this.walletUID] = this.addresses[this.walletUID].concat(addrs)
-        
-        return resolve(this.addresses[this.walletUID])
+        // Return the addresses we fetched *without* updating state
+        return resolve(addrs);
       })
     })
   }
@@ -260,8 +261,8 @@ class LatticeKeyring extends EventEmitter {
         // Otherwise we need to fetch them
         //-----------
         // V1: We will only support export of one (the first) address
-        return this._getAddress(1, 0);
-        // return this._getAddress(PER_PAGE, start);
+        return this._fetchAddresses(1, 0);
+        // return this._fetchAddresses(PER_PAGE, start);
         //-----------
       })
       .then((addrs) => {
