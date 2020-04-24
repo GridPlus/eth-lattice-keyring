@@ -90,8 +90,49 @@ class LatticeKeyring extends EventEmitter {
     return Promise.resolve(this.addresses[this.walletUID] || [])
   }
 
-  signTransaction(address, transaction) { 
-    return Promise.reject(Error('signTransaction not yet implemented'))
+  signTransaction (address, tx) {
+    return new Promise((resolve, reject) => {
+      this.unlock()
+      .then(() => {
+        return this.getAccounts()
+      })
+      .then((addrs) => {
+        // Find the signer in our current set of accounts
+        // If we can't find it, return an error
+        let addrIdx = null;
+        addrs.forEach((addr, i) => {
+          if (address.toLowerCase() === addr.toLowerCase())
+            addrIdx = i;
+        })
+        if (addrIdx === null)
+          return reject('Signer not present');
+
+        // Build the Lattice request data and make request
+        const txData = {
+          chainId: tx.getChainId(),
+          nonce: Number(`0x${tx.nonce.toString('hex')}`) || 0,
+          gasPrice: Number(`0x${tx.gasPrice.toString('hex')}`),
+          gasLimit: Number(`0x${tx.gasLimit.toString('hex')}`),
+          to: `0x${tx.to.toString('hex')}`,
+          value: Number(`0x${tx.value.toString('hex')}`),
+          data: tx.data.length === 0 ? null : `0x${tx.data.toString('hex')}`,
+          signerPath: [HARDENED_OFFSET+44, HARDENED_OFFSET+60, HARDENED_OFFSET, 0, addrIdx],
+        }
+        return this._signTxData(txData)
+      })
+      .then((signedTx) => {
+        // Add the sig params. `signedTx = { sig: { v, r, s }, tx, txHash}`
+        if (!signedTx.sig || !signedTx.sig.v || !signedTx.sig.r || !signedTx.sig.s)
+          return reject(Error('No signature returned'));
+        tx.v = signedTx.sig.v;
+        tx.r = Buffer.from(signedTx.sig.r, 'hex');
+        tx.s = Buffer.from(signedTx.sig.s, 'hex');
+        return resolve(tx);
+      })
+      .catch((err) => {
+        return reject(Error(`Error sigining: ${err}`));
+      })
+    })
   }
 
   signMessage(address, data) {
@@ -239,6 +280,20 @@ class LatticeKeyring extends EventEmitter {
           return reject('No addresses returned');
         // Return the addresses we fetched *without* updating state
         return resolve(addrs);
+      })
+    })
+  }
+
+  _signTxData(txData) {
+    return new Promise((resolve, reject) => {
+      if (!this._hasSession())
+        return reject('No SDK session started. Cannot sign transaction.')
+      this.sdkSession.sign({ currency: 'ETH', data: txData }, (err, res) => {
+        if (err)
+          return reject(`Error from sign: ${JSON.stringify(err)}`);
+        if (!res.tx)
+          return reject('No transaction payload returned.');
+        return resolve(res)
       })
     })
   }
