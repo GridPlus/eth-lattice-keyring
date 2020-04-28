@@ -41,9 +41,7 @@ class LatticeKeyring extends EventEmitter {
   }
 
   // Initialize a session with the Lattice1 device using the GridPlus SDK
-  unlock() {
-    if (this.isUnlocked()) 
-      return this._connect();
+  unlock(updateData=true) {
     return new Promise((resolve, reject) => {
       this._getCreds()
       .then((creds) => {
@@ -52,6 +50,9 @@ class LatticeKeyring extends EventEmitter {
           this.creds.password = creds.password;
         }
         return this._initSession();
+      })
+      .then(() => {
+        return this._connect(updateData);
       })
       .then(() => {
         return resolve('Unlocked');
@@ -88,7 +89,12 @@ class LatticeKeyring extends EventEmitter {
 
   signTransaction (address, tx) {
     return new Promise((resolve, reject) => {
-      this.unlock()
+      // NOTE: We are passing `false` here because we do NOT want
+      // state data to be updated as a result of a transaction request.
+      // It is possible the user inserted or removed a SafeCard and
+      // will not be able to sign this transaction. If that is the
+      // case, we just want to return an error message
+      this.unlock(false)
       .then(() => {
         return this.getAccounts()
       })
@@ -144,6 +150,12 @@ class LatticeKeyring extends EventEmitter {
       if (account.toLowerCase() === address.toLowercase())
         this.accounts.splice(i, i+1);
     })
+    // If we have removed the last account, let's reset state
+    // completely so if a user wants to connect to the Lattice,
+    // they always have the ability to do so (because the SDK
+    // session is reset)
+    if (this.accounts.length === 0)
+      this.forgetDevice();
   }
 
   getFirstPage() {
@@ -217,7 +229,11 @@ class LatticeKeyring extends EventEmitter {
   // [re]connect to the Lattice. This should be done frequently to ensure
   // the expected wallet UID is still the one active in the Lattice.
   // This will handle SafeCard insertion/removal events.
-  _connect() {
+  // updateData - true if you want to overwrite walletUID and accounts in
+  //              the event that we find we are not synced.
+  //              If left false and we notice a new walletUID, we will
+  //              return an error.
+  _connect(updateData) {
     return new Promise((resolve, reject) => {
       this.sdkSession.connect(this.creds.deviceID, (err) => {
         if (err)
@@ -230,8 +246,15 @@ class LatticeKeyring extends EventEmitter {
         // If we fetched a walletUID that does not match our current one,
         // reset accounts and update the known UID
         if (newUID != this.walletUID) {
+          // If we don't want to update data, return an error
+          if (updateData === false)
+            return reject('Wallet has changed! Please reconnect.')
+          
+          // By default we should clear out accounts and update with
+          // the new walletUID. We should NOT fill in the accounts yet,
+          // as we reserve that functionality to `addAccounts`
           this.accounts = [];
-          this.walletUID = newUID
+          this.walletUID = newUID;
         }
         return resolve();
       });
@@ -240,6 +263,8 @@ class LatticeKeyring extends EventEmitter {
 
   _initSession() {
     return new Promise((resolve, reject) => {
+      if (this._hasSession())
+        return resolve();
       try {
         const setupData = {
           name: 'Metamask',
@@ -249,14 +274,7 @@ class LatticeKeyring extends EventEmitter {
           privKey: this._genSessionKey(),
         }
         this.sdkSession = new SDK.Client(setupData);
-        // Connect to the device
-        this._connect()
-        .then(() => {
-          return resolve();
-        })
-        .catch((err) => {
-          return reject(err);
-        })
+        return resolve();
       } catch (err) {
         return reject(err);
       }
