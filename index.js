@@ -22,7 +22,7 @@ class LatticeKeyring extends EventEmitter {
     if (opts.creds)
       this.creds = opts.creds;
     if (opts.accounts)
-      this.addresses = opts.accounts;
+      this.accounts = opts.accounts;
     if (opts.walletUID)
       this.walletUID = opts.walletUID;
     return Promise.resolve()
@@ -31,7 +31,7 @@ class LatticeKeyring extends EventEmitter {
   serialize() {
     return Promise.resolve({
       creds: this.creds,
-      accounts: this.addresses,
+      accounts: this.accounts,
       walletUID: this.walletUID,
     })
   }
@@ -70,14 +70,10 @@ class LatticeKeyring extends EventEmitter {
         return this._fetchAddresses(n, this.unlockedAccount)
       })
       .then((addrs) => {
-        // Ensure we have an array to add to
-        if (this.walletUID && !this.addresses[this.walletUID])
-          this.addresses[this.walletUID] = [];
-        // If we have requested new address(es), add to the local store
-        if (this.addresses[this.walletUID].length === this.unlockedAccount)
-          this.addresses[this.walletUID] = this.addresses[this.walletUID].concat(addrs);
-        // Return the local store
-        return resolve(this.addresses[this.walletUID])
+        // Splice the new account(s) into `this.accounts`
+        this.accounts.splice(this.unlockedAccount, n);
+        this.accounts.splice(this.unlockedAccount, 0, ...addrs);
+        return resolve(this.accounts);
       })
       .catch((err) => {
         return reject(err);
@@ -87,7 +83,7 @@ class LatticeKeyring extends EventEmitter {
 
   // Return the local store of addresses
   getAccounts() {
-    return Promise.resolve(this.addresses[this.walletUID] || [])
+    return Promise.resolve(this.accounts || []);
   }
 
   signTransaction (address, tx) {
@@ -144,13 +140,10 @@ class LatticeKeyring extends EventEmitter {
   }
 
   removeAccount(address) {
-    if (this.walletUID) {
-      this.addresses[this.walletUID].forEach((storedAddr, i) => {
-        // If we have a match, splice out that address index
-        if (storedAddr.toLowerCase() === address.toLowerCase())
-          this.addresses[this.walletUID].splice(i, i+1)
-      })
-    }
+    this.accounts.forEach((account, i) => {
+      if (account.toLowerCase() === address.toLowercase())
+        this.accounts.splice(i, i+1);
+    })
   }
 
   getFirstPage() {
@@ -160,12 +153,10 @@ class LatticeKeyring extends EventEmitter {
 
   getNextPage () {
     return this.getFirstPage();
-    // return this._getPage(1)
   }
 
   getPreviousPage () {
     return this.getFirstPage();
-    // return this._getPage(-1)
   }
 
   setAccountToUnlock (index) {
@@ -180,7 +171,7 @@ class LatticeKeyring extends EventEmitter {
   // Internal methods and interface to SDK
   //-------------------------------------------------------------------
   _resetDefaults() {
-    this.addresses = {};
+    this.accounts = [];
     this.isLocked = true;
     this.creds = {
       deviceID: null,
@@ -235,9 +226,13 @@ class LatticeKeyring extends EventEmitter {
         const activeWallet = this.sdkSession.getActiveWallet();
         if (!activeWallet || !activeWallet.uid)
           return reject("No active wallet");
-        this.walletUID = activeWallet.uid.toString('hex');
-        if (!this.addresses[this.walletUID])
-          this.addresses[this.walletUID] = [];
+        const newUID = activeWallet.uid.toString('hex');
+        // If we fetched a walletUID that does not match our current one,
+        // reset accounts and update the known UID
+        if (newUID != this.walletUID) {
+          this.accounts = [];
+          this.walletUID = newUID
+        }
         return resolve();
       });
     })
@@ -274,12 +269,12 @@ class LatticeKeyring extends EventEmitter {
         return reject('No SDK session started. Cannot fetch addresses.')
 
       // The Lattice does not allow for us to skip indices.
-      if (i > this.addresses[this.walletUID].length)
-        return reject(`Requested address is out of bounds. You may only request index <${this.addresses.length}`)
+      if (i > this.accounts.length)
+        return reject(`Requested address is out of bounds. You may only request index <${this.accounts.length}`)
 
       // If we have already cached the address(es), we don't need to do it again
-      if (this.addresses[this.walletUID].length > i)
-        return resolve(this.addresses[this.walletUID].slice(i, n));
+      if (this.accounts.length > i)
+        return resolve(this.accounts.slice(i, n));
       
       // Make the request to get the requested address
       const addrData = { 
@@ -323,16 +318,8 @@ class LatticeKeyring extends EventEmitter {
 
       this.unlock()
       .then(() => {
-        // V1: Disabled
-        // If we already have the addresses, use them them
-        // if (this.addresses[this.walletUID].length >= to)
-          // return Promise.resolve(this.addresses[this.walletUID].slice(start, to));
-        
-        // Otherwise we need to fetch them
-        //-----------
         // V1: We will only support export of one (the first) address
         return this._fetchAddresses(1, 0);
-        // return this._fetchAddresses(PER_PAGE, start);
         //-----------
       })
       .then((addrs) => {
