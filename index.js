@@ -43,7 +43,7 @@ class LatticeKeyring extends EventEmitter {
   // Initialize a session with the Lattice1 device using the GridPlus SDK
   unlock() {
     if (this.isUnlocked()) 
-      return Promise.resolve()
+      return this._connect();
     return new Promise((resolve, reject) => {
       this._getCreds()
       .then((creds) => {
@@ -57,7 +57,7 @@ class LatticeKeyring extends EventEmitter {
         return resolve('Unlocked');
       })
       .catch((err) => {
-        return reject(Error(`Error unlocking ${err}`));
+        return reject(Error(err));
       })
     })
   }
@@ -130,7 +130,7 @@ class LatticeKeyring extends EventEmitter {
         return resolve(tx);
       })
       .catch((err) => {
-        return reject(Error(`Error sigining: ${err}`));
+        return reject(Error(err));
       })
     })
   }
@@ -223,6 +223,26 @@ class LatticeKeyring extends EventEmitter {
     })
   }
 
+  // [re]connect to the Lattice. This should be done frequently to ensure
+  // the expected wallet UID is still the one active in the Lattice.
+  // This will handle SafeCard insertion/removal events.
+  _connect() {
+    return new Promise((resolve, reject) => {
+      this.sdkSession.connect(this.creds.deviceID, (err) => {
+        if (err)
+          return reject(err);
+        // Save the current wallet UID
+        const activeWallet = this.sdkSession.getActiveWallet();
+        if (!activeWallet || !activeWallet.uid)
+          return reject("No active wallet");
+        this.walletUID = activeWallet.uid.toString('hex');
+        if (!this.addresses[this.walletUID])
+          this.addresses[this.walletUID] = [];
+        return resolve();
+      });
+    })
+  }
+
   _initSession() {
     return new Promise((resolve, reject) => {
       try {
@@ -235,18 +255,13 @@ class LatticeKeyring extends EventEmitter {
         }
         this.sdkSession = new SDK.Client(setupData);
         // Connect to the device
-        this.sdkSession.connect(this.creds.deviceID, (err) => {
-          if (err)
-            return reject(`(connect) ${err}`);
-          // Save the current wallet UID
-          const activeWallet = this.sdkSession.getActiveWallet();
-          if (!activeWallet || !activeWallet.uid)
-            return reject("No active wallet");
-          this.walletUID = activeWallet.uid.toString('hex');
-          if (!this.addresses[this.walletUID])
-            this.addresses[this.walletUID] = [];
+        this._connect()
+        .then(() => {
           return resolve();
-        });
+        })
+        .catch((err) => {
+          return reject(err);
+        })
       } catch (err) {
         return reject(err);
       }
@@ -290,7 +305,7 @@ class LatticeKeyring extends EventEmitter {
         return reject('No SDK session started. Cannot sign transaction.')
       this.sdkSession.sign({ currency: 'ETH', data: txData }, (err, res) => {
         if (err)
-          return reject(`Error from sign: ${JSON.stringify(err)}`);
+          return reject(err);
         if (!res.tx)
           return reject('No transaction payload returned.');
         return resolve(res)
