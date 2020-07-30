@@ -8,7 +8,7 @@ const HARDENED_OFFSET = 0x80000000;
 const PER_PAGE = 5;
 
 class LatticeKeyring extends EventEmitter {
-  constructor (opts = {}) {
+  constructor (opts={}) {
     super()
     this.type = keyringType
     this._resetDefaults();
@@ -25,6 +25,8 @@ class LatticeKeyring extends EventEmitter {
       this.accounts = opts.accounts;
     if (opts.walletUID)
       this.walletUID = opts.walletUID;
+    if (opts.name)
+      this.name = opts.name;
     return Promise.resolve()
   }
 
@@ -33,6 +35,7 @@ class LatticeKeyring extends EventEmitter {
       creds: this.creds,
       accounts: this.accounts,
       walletUID: this.walletUID,
+      name: this.name,
     })
   }
 
@@ -204,7 +207,8 @@ class LatticeKeyring extends EventEmitter {
       // If we are not aware of what Lattice we should be talking to,
       // we need to open a window that lets the user go through the
       // pairing or connection process.
-      const popup = window.open(`${CONNECT_URL}?keyring=true`);
+      const name = this.name ? this.name : 'Unknown'
+      const popup = window.open(`${CONNECT_URL}?keyring=${name}`);
       popup.postMessage('GET_LATTICE_CREDS', CONNECT_URL);
 
       // PostMessage handler
@@ -267,7 +271,7 @@ class LatticeKeyring extends EventEmitter {
         return resolve();
       try {
         const setupData = {
-          name: 'Metamask',
+          name: this.name,
           baseUrl: SIGNING_URL,
           crypto,
           timeout: 120000,
@@ -359,7 +363,7 @@ class LatticeKeyring extends EventEmitter {
   }
 
   _hasCreds() {
-    return this.creds.deviceID !== null && this.creds.password !== null;
+    return this.creds.deviceID !== null && this.creds.password !== null && this.name;
   }
 
   _hasSession() {
@@ -369,7 +373,11 @@ class LatticeKeyring extends EventEmitter {
   _genSessionKey() {
     if (!this._hasCreds())
       throw new Error('No credentials -- cannot create session key!');
-    const buf = Buffer.concat([Buffer.from(this.creds.password), Buffer.from(this.creds.deviceID)])
+    const buf = Buffer.concat([
+      Buffer.from(this.creds.password), 
+      Buffer.from(this.creds.deviceID), 
+      Buffer.from(this.name)
+    ])
     return crypto.createHash('sha256').update(buf).digest();
   }
 
