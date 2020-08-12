@@ -87,7 +87,7 @@ class LatticeKeyring extends EventEmitter {
 
   // Return the local store of addresses
   getAccounts() {
-    return Promise.resolve(this.accounts || []);
+    return Promise.resolve(this.accounts ? this.accounts.slice() : [].slice());
   }
 
   signTransaction (address, tx) {
@@ -149,16 +149,10 @@ class LatticeKeyring extends EventEmitter {
   }
 
   removeAccount(address) {
-    this.accounts.forEach((account, i) => {
-      if (account.toLowerCase() === address.toLowercase())
-        this.accounts.splice(i, i+1);
-    })
-    // If we have removed the last account, let's reset state
-    // completely so if a user wants to connect to the Lattice,
-    // they always have the ability to do so (because the SDK
-    // session is reset)
-    if (this.accounts.length === 0)
-      this.forgetDevice();
+    // We only allow one account at a time, so removing any account
+    // should result in a state reset. The user will need to reconnect
+    // to the Lattice
+    this.forgetDevice();
   }
 
   getFirstPage() {
