@@ -272,7 +272,9 @@ class LatticeKeyring extends EventEmitter {
       if (this._hasSession())
         return resolve();
       try {
-        const url = this.network === 'mainnet' ? 'https://signing.gridpl.us' : 'https://signing.staging-gridpl.us'
+        let url = 'https://signing.gridpl.us';
+        if (this.network && this.network !== 'mainnet')
+          url = 'https://signing.staging-gridpl.us'
         const setupData = {
           name: this.name,
           baseUrl: url,
