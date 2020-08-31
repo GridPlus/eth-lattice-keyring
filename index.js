@@ -2,8 +2,6 @@ const crypto = require('crypto');
 const EventEmitter = require('events').EventEmitter;
 const SDK = require('gridplus-sdk');
 const keyringType = 'Lattice Hardware';
-const CONNECT_URL = 'https://wallet.gridplus.io';
-const SIGNING_URL = 'https://signing.staging-gridpl.us';
 const HARDENED_OFFSET = 0x80000000;
 const PER_PAGE = 5;
 
@@ -27,6 +25,8 @@ class LatticeKeyring extends EventEmitter {
       this.walletUID = opts.walletUID;
     if (opts.name)
       this.name = opts.name;
+    if (opts.network)
+      this.network = opts.network;
     return Promise.resolve()
   }
 
@@ -36,6 +36,7 @@ class LatticeKeyring extends EventEmitter {
       accounts: this.accounts,
       walletUID: this.walletUID,
       name: this.name,
+      network: this.network,
     })
   }
 
@@ -190,6 +191,7 @@ class LatticeKeyring extends EventEmitter {
     this.sdkSession = null;
     this.page = 0;
     this.unlockedAccount = 0;
+    this.network = null;
   }
 
   _getCreds() {
@@ -202,13 +204,19 @@ class LatticeKeyring extends EventEmitter {
       // we need to open a window that lets the user go through the
       // pairing or connection process.
       const name = this.name ? this.name : 'Unknown'
-      const popup = window.open(`${CONNECT_URL}?keyring=${name}`);
-      popup.postMessage('GET_LATTICE_CREDS', CONNECT_URL);
+      let base = 'https://wallet.gridplus.io';
+      if (this.network && this.network !== 'mainnet')
+        base = 'https://gridplus-web-wallet-dev.herokuapp.com';
+      let url = `${base}?keyring=${name}`;
+      if (this.network)
+        url += `&network=${this.network}`
+      const popup = window.open(url);
+      popup.postMessage('GET_LATTICE_CREDS', base);
 
       // PostMessage handler
       function receiveMessage(event) {
         // Ensure origin
-        if (event.origin !== CONNECT_URL)
+        if (event.origin !== base)
           return;
         // Parse response data
         try {
@@ -264,12 +272,14 @@ class LatticeKeyring extends EventEmitter {
       if (this._hasSession())
         return resolve();
       try {
+        const url = this.network === 'mainnet' ? 'https://signing.gridpl.us' : 'https://signing.staging-gridpl.us'
         const setupData = {
           name: this.name,
-          baseUrl: SIGNING_URL,
+          baseUrl: url,
           crypto,
           timeout: 120000,
           privKey: this._genSessionKey(),
+          network: this.network
         }
         this.sdkSession = new SDK.Client(setupData);
         return resolve();
