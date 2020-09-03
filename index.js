@@ -112,18 +112,9 @@ class LatticeKeyring extends EventEmitter {
         })
         if (addrIdx === null)
           return reject('Signer not present');
-
         // Build the Lattice request data and make request
-        const txData = {
-          chainId: tx.getChainId(),
-          nonce: Number(`0x${tx.nonce.toString('hex')}`) || 0,
-          gasPrice: Number(`0x${tx.gasPrice.toString('hex')}`),
-          gasLimit: Number(`0x${tx.gasLimit.toString('hex')}`),
-          to: `0x${tx.to.toString('hex')}`,
-          value: Number(`0x${tx.value.toString('hex')}`),
-          data: tx.data.length === 0 ? null : `0x${tx.data.toString('hex')}`,
-          signerPath: [HARDENED_OFFSET+44, HARDENED_OFFSET+60, HARDENED_OFFSET, 0, addrIdx],
-        }
+        const txData = this._processTxData(tx);
+        txData.signerPath = [HARDENED_OFFSET+44, HARDENED_OFFSET+60, HARDENED_OFFSET, 0, addrIdx];
         return this._signTxData(txData)
       })
       .then((signedTx) => {
@@ -385,6 +376,30 @@ class LatticeKeyring extends EventEmitter {
       Buffer.from(this.name)
     ])
     return crypto.createHash('sha256').update(buf).digest();
+  }
+
+  _processTxData(tx) {
+    function getHexNum(x) {
+      if (typeof x === 'number')
+        return `0x${x.toString(16)}`
+      else
+        return `0x${parseInt(x).toString(16)}`
+    }
+    
+    const txData = {};
+    txData.chainId = tx.chainId ? tx.chainId : tx.getChainId();
+    txData.nonce = Number(getHexNum(tx.nonce)) || 0;
+    txData.gasPrice = Number(getHexNum(tx.gasPrice)) || 0;
+    txData.gasLimit = Number(getHexNum(tx.gasLimit)) || 0;
+    txData.value = Number(getHexNum(tx.value)) || 0;
+    txData.to = tx.to.toString('hex').slice(0, 2) === '0x' ? tx.to.toString('hex') : `0x${tx.to.toString('hex')}`
+    if (tx.data.length === 0)
+      txData.data = null;
+    else if (tx.data.toString('hex').slice(0, 2) === '0x')
+      txData.data = tx.data.toString('hex')
+    else
+      txData.data = `0x${tx.data.toString('hex')}`
+    return txData;
   }
 
 }
