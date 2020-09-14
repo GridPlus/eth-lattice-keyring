@@ -44,6 +44,11 @@ class LatticeKeyring extends EventEmitter {
     return this._hasCreds() && this._hasSession()
   }
 
+  setHdPath() {
+    console.warn("setHdPath not implemented.")
+    return;
+  }
+
   // Initialize a session with the Lattice1 device using the GridPlus SDK
   unlock(updateData=true) {
     return new Promise((resolve, reject) => {
@@ -93,28 +98,19 @@ class LatticeKeyring extends EventEmitter {
 
   signTransaction (address, tx) {
     return new Promise((resolve, reject) => {
-      // NOTE: We are passing `false` here because we do NOT want
-      // state data to be updated as a result of a transaction request.
-      // It is possible the user inserted or removed a SafeCard and
-      // will not be able to sign this transaction. If that is the
-      // case, we just want to return an error message
-      this.unlock(false)
-      .then(() => {
-        return this.getAccounts()
-      })
-      .then((addrs) => {
-        // Find the signer in our current set of accounts
-        // If we can't find it, return an error
-        let addrIdx = null;
-        addrs.forEach((addr, i) => {
-          if (address.toLowerCase() === addr.toLowerCase())
-            addrIdx = i;
-        })
-        if (addrIdx === null)
-          return reject('Signer not present');
+      this._unlockAndFindAccount(address)
+      .then((addrIdx) => {
         // Build the Lattice request data and make request
-        const txData = this._processTxData(tx);
-        txData.signerPath = [HARDENED_OFFSET+44, HARDENED_OFFSET+60, HARDENED_OFFSET, 0, addrIdx];
+        const txData = {
+          chainId: tx.getChainId(),
+          nonce: Number(`0x${tx.nonce.toString('hex')}`) || 0,
+          gasPrice: Number(`0x${tx.gasPrice.toString('hex')}`),
+          gasLimit: Number(`0x${tx.gasLimit.toString('hex')}`),
+          to: `0x${tx.to.toString('hex')}`,
+          value: Number(`0x${tx.value.toString('hex')}`),
+          data: tx.data.length === 0 ? null : `0x${tx.data.toString('hex')}`,
+          signerPath: [HARDENED_OFFSET+44, HARDENED_OFFSET+60, HARDENED_OFFSET, 0, addrIdx],
+        }
         return this._signTxData(txData)
       })
       .then((signedTx) => {
@@ -133,7 +129,36 @@ class LatticeKeyring extends EventEmitter {
   }
 
   signMessage(address, data) {
-    return Promise.reject(Error('signMessage not yet implemented'))  
+    console.warn('NOTE: signMessage is currently a proxy for signPersonalMessage!')
+    return this.signPersonalMessage(address, data);
+  }
+
+  signPersonalMessage(address, data) {
+    return new Promise((resolve, reject) => {
+      this._unlockAndFindAccount(address)
+      .then((addrIdx) => {
+        const req = {
+          currency: 'ETH_MSG',
+          data: {
+            protocol: 'signPersonal',
+            payload: data,
+            signerPath: [HARDENED_OFFSET+44, HARDENED_OFFSET+60, HARDENED_OFFSET, 0, addrIdx],
+          }
+        }
+        if (!this._hasSession())
+          return reject('No SDK session started. Cannot sign transaction.')
+        this.sdkSession.sign(req, (err, res) => {
+          if (err)
+            return reject(err);
+          if (!res.sig)
+            return reject('No signature returned');
+          let v = (res.sig.v - 27).toString(16);
+          if (v.length < 2)
+            v = `0${v}`;
+          return resolve(`0x${res.sig.r}${res.sig.s}${v}`);
+        })
+      })
+    })
   }
 
   exportAccount(address) {
@@ -171,6 +196,36 @@ class LatticeKeyring extends EventEmitter {
   //-------------------------------------------------------------------
   // Internal methods and interface to SDK
   //-------------------------------------------------------------------
+  _unlockAndFindAccount(address) {
+    return new Promise((resolve, reject) => {
+      // NOTE: We are passing `false` here because we do NOT want
+      // state data to be updated as a result of a transaction request.
+      // It is possible the user inserted or removed a SafeCard and
+      // will not be able to sign this transaction. If that is the
+      // case, we just want to return an error message
+      this.unlock(false)
+      .then(() => {
+        return this.getAccounts()
+      })
+      .then((addrs) => {
+        // Find the signer in our current set of accounts
+        // If we can't find it, return an error
+        let addrIdx = null;
+        addrs.forEach((addr, i) => {
+          if (address.toLowerCase() === addr.toLowerCase())
+            addrIdx = i;
+        })
+        if (addrIdx === null)
+          return reject('Signer not present');
+        return resolve(addrIdx);
+      })
+      .catch((err) => {
+        return reject(err);
+      })
+    })
+  }
+
+
   _resetDefaults() {
     this.accounts = [];
     this.isLocked = true;
@@ -376,30 +431,6 @@ class LatticeKeyring extends EventEmitter {
       Buffer.from(this.name)
     ])
     return crypto.createHash('sha256').update(buf).digest();
-  }
-
-  _processTxData(tx) {
-    function getHexNum(x) {
-      if (typeof x === 'number')
-        return `0x${x.toString(16)}`
-      else
-        return `0x${parseInt(x).toString(16)}`
-    }
-    
-    const txData = {};
-    txData.chainId = tx.chainId ? tx.chainId : tx.getChainId();
-    txData.nonce = Number(getHexNum(tx.nonce)) || 0;
-    txData.gasPrice = Number(getHexNum(tx.gasPrice)) || 0;
-    txData.gasLimit = Number(getHexNum(tx.gasLimit)) || 0;
-    txData.value = Number(getHexNum(tx.value)) || 0;
-    txData.to = tx.to.toString('hex').slice(0, 2) === '0x' ? tx.to.toString('hex') : `0x${tx.to.toString('hex')}`
-    if (tx.data.length === 0)
-      txData.data = null;
-    else if (tx.data.toString('hex').slice(0, 2) === '0x')
-      txData.data = tx.data.toString('hex')
-    else
-      txData.data = `0x${tx.data.toString('hex')}`
-    return txData;
   }
 
 }
