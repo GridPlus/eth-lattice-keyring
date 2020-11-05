@@ -128,20 +128,22 @@ class LatticeKeyring extends EventEmitter {
     })
   }
 
-  signMessage(address, data) {
-    console.warn('NOTE: signMessage is currently a proxy for signPersonalMessage!')
-    return this.signPersonalMessage(address, data);
+  signPersonalMessage(address, msg) {
+    return this.signMessage(address, { payload: msg, protocol: 'signPersonal' });
   }
 
-  signPersonalMessage(address, data) {
+  signMessage(address, msg) {
     return new Promise((resolve, reject) => {
       this._unlockAndFindAccount(address)
       .then((addrIdx) => {
+        const { payload, protocol } = msg;
+        if (!payload || !protocol)
+          return reject('`payload` and `protocol` fields must be included in the request');
         const req = {
           currency: 'ETH_MSG',
           data: {
-            protocol: 'signPersonal',
-            payload: data,
+            protocol,
+            payload,
             signerPath: [HARDENED_OFFSET+44, HARDENED_OFFSET+60, HARDENED_OFFSET, 0, addrIdx],
           }
         }
