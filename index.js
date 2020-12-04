@@ -4,6 +4,7 @@ const SDK = require('gridplus-sdk');
 const keyringType = 'Lattice Hardware';
 const HARDENED_OFFSET = 0x80000000;
 const PER_PAGE = 5;
+const CLOSE_CODE = -1000;
 
 class LatticeKeyring extends EventEmitter {
   constructor (opts={}) {
@@ -75,19 +76,30 @@ class LatticeKeyring extends EventEmitter {
   // Add addresses to the local store and return the full result
   addAccounts(n=1) {
     return new Promise((resolve, reject) => {
-      this.unlock()
-      .then(() => {
-        return this._fetchAddresses(n, this.unlockedAccount)
-      })
-      .then((addrs) => {
-        // Splice the new account(s) into `this.accounts`
-        this.accounts.splice(this.unlockedAccount, n);
-        this.accounts.splice(this.unlockedAccount, 0, ...addrs);
-        return resolve(this.accounts);
-      })
-      .catch((err) => {
-        return reject(err);
-      })
+      if (n === CLOSE_CODE) {
+        // Special case: use a code to forget the device. 
+        // (This function is overloaded due to constraints upstream)
+        this.forgetDevice();
+        return resolve([]);
+      } else if (n <= 0) {
+        // Avoid non-positive numbers.
+        return reject('Number of accounts to add must be a positive number.');
+      } else {
+        // Normal behavior: establish the connection and fetch addresses.
+        this.unlock()
+        .then(() => {
+          return this._fetchAddresses(n, this.unlockedAccount)
+        })
+        .then((addrs) => {
+          // Splice the new account(s) into `this.accounts`
+          this.accounts.splice(this.unlockedAccount, n);
+          this.accounts.splice(this.unlockedAccount, 0, ...addrs);
+          return resolve(this.accounts);
+        })
+        .catch((err) => {
+          return reject(err);
+        })
+      }
     })
   }
 
