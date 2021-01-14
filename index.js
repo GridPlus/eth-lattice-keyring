@@ -265,8 +265,13 @@ class LatticeKeyring extends EventEmitter {
       // pairing or connection process.
       const name = this.name ? this.name : 'Unknown'
       let base = 'https://wallet.gridplus.io';
-      if (this.network && this.network !== 'mainnet')
-        base = 'https://gridplus-web-wallet-dev.herokuapp.com';
+      switch (this.network) {
+        case 'rinkeby':
+          base = 'https://gridplus-web-wallet-dev.herokuapp.com';
+          break;
+        default:
+          break;
+      }
       let url = `${base}?keyring=${name}`;
       if (this.network)
         url += `&network=${this.network}`
