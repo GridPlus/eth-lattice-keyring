@@ -68,7 +68,7 @@ class LatticeKeyring extends EventEmitter {
         return resolve('Unlocked');
       })
       .catch((err) => {
-        return reject(Error(err));
+        return reject(new Error(err));
       })
     })
   }
@@ -97,7 +97,7 @@ class LatticeKeyring extends EventEmitter {
           return resolve(this.accounts);
         })
         .catch((err) => {
-          return reject(err);
+          return reject(new Error(err));
         })
       }
     })
@@ -114,7 +114,7 @@ class LatticeKeyring extends EventEmitter {
       .then((addrIdx) => {
         // Build the Lattice request data and make request
         const txData = {
-          chainId: tx.getChainId(),
+          chainId: tx.getChainId() || 1,
           nonce: Number(`0x${tx.nonce.toString('hex')}`) || 0,
           gasPrice: Number(`0x${tx.gasPrice.toString('hex')}`),
           gasLimit: Number(`0x${tx.gasLimit.toString('hex')}`),
@@ -135,7 +135,7 @@ class LatticeKeyring extends EventEmitter {
         return resolve(tx);
       })
       .catch((err) => {
-        return reject(Error(err));
+        return reject(new Error(err));
       })
     })
   }
@@ -163,7 +163,7 @@ class LatticeKeyring extends EventEmitter {
           return reject('No SDK session started. Cannot sign transaction.')
         this.sdkSession.sign(req, (err, res) => {
           if (err)
-            return reject(err);
+            return reject(new Error(err));
           if (!res.sig)
             return reject('No signature returned');
           let v = (res.sig.v - 27).toString(16);
