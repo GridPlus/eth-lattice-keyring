@@ -28,6 +28,8 @@ class LatticeKeyring extends EventEmitter {
       this.name = opts.name;
     if (opts.network)
       this.network = opts.network;
+    if (opts.page)
+      this.page = opts.page;
     return Promise.resolve()
   }
 
@@ -38,6 +40,7 @@ class LatticeKeyring extends EventEmitter {
       walletUID: this.walletUID,
       name: this.name,
       network: this.network,
+      page: this.page,
     })
   }
 
@@ -91,9 +94,8 @@ class LatticeKeyring extends EventEmitter {
           return this._fetchAddresses(n, this.unlockedAccount)
         })
         .then((addrs) => {
-          // Splice the new account(s) into `this.accounts`
-          this.accounts.splice(this.unlockedAccount, n);
-          this.accounts.splice(this.unlockedAccount, 0, ...addrs);
+          // Add these indices
+          this.accounts = this.accounts.concat(addrs)
           return resolve(this.accounts);
         })
         .catch((err) => {
@@ -188,15 +190,15 @@ class LatticeKeyring extends EventEmitter {
 
   getFirstPage() {
     this.page = 0;
-    return this._getPage(1);
+    return this._getPage(0);
   }
 
   getNextPage () {
-    return this.getFirstPage();
+    return this._getPage(1);
   }
 
   getPreviousPage () {
-    return this.getFirstPage();
+    return this._getPage(-1);
   }
 
   setAccountToUnlock (index) {
@@ -361,19 +363,16 @@ class LatticeKeyring extends EventEmitter {
       if (!this._hasSession())
         return reject('No SDK session started. Cannot fetch addresses.')
 
-      // The Lattice does not allow for us to skip indices.
-      if (i > this.accounts.length)
-        return reject(`Requested address is out of bounds. You may only request index <${this.accounts.length}`)
-
       // If we have already cached the address(es), we don't need to do it again
-      if (this.accounts.length > i)
+      if (this.accounts.length > (i + n))
         return resolve(this.accounts.slice(i, n));
       
       // Make the request to get the requested address
       const addrData = { 
         currency: 'ETH', 
         startPath: [HARDENED_OFFSET+44, HARDENED_OFFSET+60, HARDENED_OFFSET, 0, i], 
-        n, // Only request one at a time. This module only supports ETH, so no gap limits
+        n,
+        skipCache: true
       }
       this.sdkSession.getAddresses(addrData, (err, addrs) => {
         if (err)
@@ -401,31 +400,27 @@ class LatticeKeyring extends EventEmitter {
     })
   }
 
-  _getPage(increment=1) {
+  _getPage(increment=0) {
     return new Promise((resolve, reject) => {
       this.page += increment;
-      if (this.page <= 0)
-        this.page = 1;
-      const start = PER_PAGE * (this.page - 1);
-      const to = PER_PAGE * this.page;
-
+      if (this.page < 0)
+        this.page = 0;
+      const start = PER_PAGE * this.page;
+      // Otherwise unlock the device and fetch more addresses
       this.unlock()
       .then(() => {
-        // V1: We will only support export of one (the first) address
-        return this._fetchAddresses(1, 0);
-        //-----------
+        return this._fetchAddresses(PER_PAGE, start)
       })
       .then((addrs) => {
-        // Build some account objects from the addresses
-        const localAccounts = [];
-        addrs.forEach((addr, i) => {
-          localAccounts.push({
-            address: addr,
+        const accounts = []
+        addrs.forEach((address, i) => {
+          accounts.push({
+            address,
             balance: null,
             index: start + i,
           })
         })
-        return resolve(localAccounts);
+        return resolve(accounts)
       })
       .catch((err) => {
         return reject(err);
