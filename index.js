@@ -98,8 +98,10 @@ class LatticeKeyring extends EventEmitter {
         .then((addrs) => {
           // Add these indices
           addrs.forEach((addr, i) => {
-            this.accounts.push(addr)
-            this.accountIndices.push(this.unlockedAccount+i)
+            if (this.accounts.indexOf(addr) === -1) {
+              this.accounts.push(addr)
+              this.accountIndices.push(this.unlockedAccount+i)
+            }
           })
           return resolve(this.accounts);
         })
