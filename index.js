@@ -22,6 +22,8 @@ class LatticeKeyring extends EventEmitter {
       this.creds = opts.creds;
     if (opts.accounts)
       this.accounts = opts.accounts;
+    if (opts.accountIndices)
+      this.accountIndices = opts.accountIndices
     if (opts.walletUID)
       this.walletUID = opts.walletUID;
     if (opts.name)
@@ -95,7 +97,10 @@ class LatticeKeyring extends EventEmitter {
         })
         .then((addrs) => {
           // Add these indices
-          this.accounts = this.accounts.concat(addrs)
+          addrs.forEach((addr, i) => {
+            this.accounts.push(addr)
+            this.accountIndices.push(this.unlockedAccount+i)
+          })
           return resolve(this.accounts);
         })
         .catch((err) => {
@@ -212,6 +217,8 @@ class LatticeKeyring extends EventEmitter {
   //-------------------------------------------------------------------
   // Internal methods and interface to SDK
   //-------------------------------------------------------------------
+  // Find the account index of the requested address.
+  // Note that this is the BIP39 path index, not the index in the address cache.
   _unlockAndFindAccount(address) {
     return new Promise((resolve, reject) => {
       // NOTE: We are passing `false` here because we do NOT want
@@ -233,7 +240,7 @@ class LatticeKeyring extends EventEmitter {
         })
         if (addrIdx === null)
           return reject('Signer not present');
-        return resolve(addrIdx);
+        return resolve(this.accountIndices[addrIdx]);
       })
       .catch((err) => {
         return reject(err);
@@ -244,6 +251,7 @@ class LatticeKeyring extends EventEmitter {
 
   _resetDefaults() {
     this.accounts = [];
+    this.accountIndices = [];
     this.isLocked = true;
     this.creds = {
       deviceID: null,
