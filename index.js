@@ -63,6 +63,7 @@ class LatticeKeyring extends EventEmitter {
         if (creds) {
           this.creds.deviceID = creds.deviceID;
           this.creds.password = creds.password;
+          this.creds.endpoint = creds.endpoint || null;
         }
         return this._initSession();
       })
@@ -258,6 +259,7 @@ class LatticeKeyring extends EventEmitter {
     this.creds = {
       deviceID: null,
       password: null,
+      endpoint: null,
     };
     this.walletUID = null;
     this.sdkSession = null;
@@ -352,6 +354,8 @@ class LatticeKeyring extends EventEmitter {
         let url = 'https://signing.gridpl.us';
         if (this.network && this.network !== 'mainnet')
           url = 'https://signing.staging-gridpl.us'
+        if (this.creds.endpoint)
+          url = this.creds.endpoint
         const setupData = {
           name: this.name,
           baseUrl: url,
