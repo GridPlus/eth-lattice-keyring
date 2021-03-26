@@ -182,9 +182,9 @@ class LatticeKeyring extends EventEmitter {
             if (v.length < 2)
               v = `0${v}`;
             return resolve(`0x${res.sig.r}${res.sig.s}${v}`);
-          } catch (err {
+          } catch (err) {
             return reject('Invalid signature format returned.')
-          })
+          }
         })
       })
     })
