@@ -176,10 +176,15 @@ class LatticeKeyring extends EventEmitter {
             return reject(new Error(err));
           if (!res.sig)
             return reject('No signature returned');
-          let v = (res.sig.v - 27).toString(16);
-          if (v.length < 2)
-            v = `0${v}`;
-          return resolve(`0x${res.sig.r}${res.sig.s}${v}`);
+          // Convert the `v` to a number. It should convert to 0 or 1
+          try {
+            let v = (Number(`0x${recoveredSig.v.toString('hex')}`) - 27).toString(16)
+            if (v.length < 2)
+              v = `0${v}`;
+            return resolve(`0x${res.sig.r}${res.sig.s}${v}`);
+          } catch (err {
+            return reject('Invalid signature format returned.')
+          })
         })
       })
     })
