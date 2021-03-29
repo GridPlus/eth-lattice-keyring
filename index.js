@@ -39,6 +39,7 @@ class LatticeKeyring extends EventEmitter {
     return Promise.resolve({
       creds: this.creds,
       accounts: this.accounts,
+      accountIndices: this.accountIndices,
       walletUID: this.walletUID,
       name: this.name,
       network: this.network,
