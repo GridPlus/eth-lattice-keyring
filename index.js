@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const EventEmitter = require('events').EventEmitter;
 const SDK = require('gridplus-sdk');
-const Transaction = require('ethereumjs-tx');
+const Transaction = require('ethereumjs-tx').Transaction;
 const Util = require('ethereumjs-util');
 const keyringType = 'Lattice Hardware';
 const HARDENED_OFFSET = 0x80000000;
