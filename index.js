@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const EventEmitter = require('events').EventEmitter;
 const SDK = require('gridplus-sdk');
 const Transaction = require('ethereumjs-tx').Transaction;
+const Common = require('ethereumjs-common').default
 const Util = require('ethereumjs-util');
 const keyringType = 'Lattice Hardware';
 const HARDENED_OFFSET = 0x80000000;
@@ -144,15 +145,34 @@ class LatticeKeyring extends EventEmitter {
         // Add the sig params. `signedTx = { sig: { v, r, s }, tx, txHash}`
         if (!signedTx.sig || !signedTx.sig.v || !signedTx.sig.r || !signedTx.sig.s)
           return reject(new Error('No signature returned.'));
-        tx.v = signedTx.sig.v;
         tx.r = Buffer.from(signedTx.sig.r, 'hex');
         tx.s = Buffer.from(signedTx.sig.s, 'hex');
-        const ethTx = new Transaction(tx)
-        const signer = Util.toChecksumAddress(`0x${ethTx.from.toString('hex')}`)
+        tx.v = signedTx.sig.v;
+        // For non-mainnet EIP155 chains, we have to create a custom network in order to instantiate
+        // the validating ethereumjs-tx Transaction object
+        // For EIP155 chains, v = CHAIN_ID * 2 + 35, meaning it can never be <35
+        // Non-EIP155 chains use v = {27,28}
+        const useCustomEip155Chain = (tx.getChainId() !== 1) && 
+                                  (parseInt(`0x${tx.v.toString('hex')}`) > 28);
+        // Not sure how to get `networkId` so I'm just going to use the `chainId` value for both.
+        // see: https://medium.com/@pedrouid/chainid-vs-networkid-how-do-they-differ-on-ethereum-eec2ed41635b
+        const customNetwork = Common.forCustomChain('mainnet', { 
+          name: 'notMainnet', 
+          networkId: tx.getChainId(),
+          chainId: tx.getChainId(), 
+        }, 'byzantium')
+        let validatingTx;
+        if (true == useCustomEip155Chain)
+          validatingTx = new Transaction(tx, { common: customNetwork });
+        else
+          validatingTx = new Transaction(tx)
+        // Use the validating transaction to confirm the `from` sender matches the address we
+        // signed from (i.e. `address`)
+        const signer = Util.toChecksumAddress(`0x${validatingTx.from.toString('hex')}`)
         const inputAddress = Util.toChecksumAddress(address)
         if (signer !== inputAddress)
           return reject(new Error(`Unexpected signer. Got ${signer}. Expected ${inputAddress}`))
-        return resolve(ethTx)
+        return resolve(tx)
       })
       .catch((err) => {
         return reject(new Error(err));
