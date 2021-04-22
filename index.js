@@ -8,11 +8,12 @@ const keyringType = 'Lattice Hardware';
 const HARDENED_OFFSET = 0x80000000;
 const PER_PAGE = 5;
 const CLOSE_CODE = -1000;
+const STANDARD_HD_PATH = `m/44'/60'/0'/0/x`
 
 class LatticeKeyring extends EventEmitter {
   constructor (opts={}) {
     super()
-    this.type = keyringType
+    this.type = keyringType;
     this._resetDefaults();
     this.deserialize(opts);
   }
@@ -21,6 +22,7 @@ class LatticeKeyring extends EventEmitter {
   // Keyring API (per `https://github.com/MetaMask/eth-simple-keyring`)
   //-------------------------------------------------------------------
   deserialize (opts = {}) {
+    this.hdPath = opts.hdPath || STANDARD_HD_PATH;
     if (opts.creds)
       this.creds = opts.creds;
     if (opts.accounts)
@@ -29,13 +31,19 @@ class LatticeKeyring extends EventEmitter {
       this.accountIndices = opts.accountIndices
     if (opts.walletUID)
       this.walletUID = opts.walletUID;
-    if (opts.name)
-      this.name = opts.name;
+    if (opts.name)  // Legacy; use is deprecated and appName is more descriptive
+      this.appName = opts.name;
+    if (opts.appName)
+      this.appName = opts.appName;
     if (opts.network)
       this.network = opts.network;
     if (opts.page)
       this.page = opts.page;
     return Promise.resolve()
+  }
+
+  setHdPath(hdPath) {
+    this.hdPath = hdPath;
   }
 
   serialize() {
@@ -44,7 +52,8 @@ class LatticeKeyring extends EventEmitter {
       accounts: this.accounts,
       accountIndices: this.accountIndices,
       walletUID: this.walletUID,
-      name: this.name,
+      appName: this.appName,
+      name: this.name,  // Legacy; use is deprecated
       network: this.network,
       page: this.page,
     })
@@ -52,11 +61,6 @@ class LatticeKeyring extends EventEmitter {
 
   isUnlocked () {
     return this._hasCreds() && this._hasSession()
-  }
-
-  setHdPath() {
-    console.warn("setHdPath not implemented.")
-    return;
   }
 
   // Initialize a session with the Lattice1 device using the GridPlus SDK
@@ -137,7 +141,7 @@ class LatticeKeyring extends EventEmitter {
           to: `0x${tx.to.toString('hex')}`,
           value: `0x${tx.value.toString('hex')}`,
           data: tx.data.length === 0 ? null : `0x${tx.data.toString('hex')}`,
-          signerPath: [HARDENED_OFFSET+44, HARDENED_OFFSET+60, HARDENED_OFFSET, 0, addrIdx],
+          signerPath: this._getHDPathIndices(addrIdx),
         }
         return this._signTxData(txData)
       })
@@ -184,6 +188,12 @@ class LatticeKeyring extends EventEmitter {
     return this.signMessage(address, { payload: msg, protocol: 'signPersonal' });
   }
 
+  signTypedData(address, msg, opts) {
+    if (opts.version && opts.version !== 'V4')
+      throw new Error(`Only signTypedData V4 messages (EIP712) are supported. Got version ${opts.version}`);
+    return this.signMessage(address, { payload: msg, protocol: 'eip712' })
+  }
+
   signMessage(address, msg) {
     return new Promise((resolve, reject) => {
       this._unlockAndFindAccount(address)
@@ -196,7 +206,7 @@ class LatticeKeyring extends EventEmitter {
           data: {
             protocol,
             payload,
-            signerPath: [HARDENED_OFFSET+44, HARDENED_OFFSET+60, HARDENED_OFFSET, 0, addrIdx],
+            signerPath: this._getHDPathIndices(addrIdx),
           }
         }
         if (!this._hasSession())
@@ -286,6 +296,37 @@ class LatticeKeyring extends EventEmitter {
     })
   }
 
+  _getHDPathIndices(insertIdx=0) {
+    const path = this.hdPath.split('/').slice(1);
+    const indices = [];
+    let usedX = false;
+    path.forEach((_idx) => {
+      const isHardened = (_idx[_idx.length - 1] === "'");
+      let idx = isHardened ? HARDENED_OFFSET : 0;
+      // If there is an `x` in the path string, we will use it to insert our
+      // index. This is useful for e.g. Ledger Live path. Most paths have the
+      // changing index as the last one, so having an `x` in the path isn't
+      // usually necessary.
+      if (_idx.indexOf('x') > -1) {
+        idx += insertIdx;
+        usedX = true;
+      } else if (isHardened) {
+        idx += Number(_idx.slice(0, _idx.length - 1));
+      } else {
+        idx += Number(_idx);
+      }
+      indices.push(idx);
+    })
+    // If this path string does not include an `x`, we just append the index
+    // to the end of the extracted set
+    if (usedX === false) {
+      indices.push(insertIdx);
+    }
+    // Sanity check -- Lattice firmware will throw an error for large paths
+    if (indices.length > 5)
+      throw new Error('Only HD paths with up to 5 indices are allowed.')
+    return indices;
+  }
 
   _resetDefaults() {
     this.accounts = [];
@@ -312,7 +353,7 @@ class LatticeKeyring extends EventEmitter {
       // If we are not aware of what Lattice we should be talking to,
       // we need to open a window that lets the user go through the
       // pairing or connection process.
-      const name = this.name ? this.name : 'Unknown'
+      const name = this.appName ? this.appName : 'Unknown'
       let base = 'https://wallet.gridplus.io';
       switch (this.network) {
         case 'rinkeby':
@@ -392,7 +433,7 @@ class LatticeKeyring extends EventEmitter {
         if (this.creds.endpoint)
           url = this.creds.endpoint
         const setupData = {
-          name: this.name,
+          name: this.appName,
           baseUrl: url,
           crypto,
           timeout: 120000,
@@ -407,7 +448,7 @@ class LatticeKeyring extends EventEmitter {
     })
   }
 
-  _fetchAddresses(n=1, i=0) {
+  _fetchAddresses(n=1, i=0, recursedAddrs=[]) {
     return new Promise((resolve, reject) => {
       if (!this._hasSession())
         return reject('No SDK session started. Cannot fetch addresses.')
@@ -415,24 +456,44 @@ class LatticeKeyring extends EventEmitter {
       // If we have already cached the address(es), we don't need to do it again
       if (this.accounts.length > (i + n))
         return resolve(this.accounts.slice(i, n));
-      
+
+      this.__fetchAddresses(n, i, (err, addrs) => {
+        if (err)
+          return reject(err);
+        else
+          return resolve(addrs);
+      })
+    })
+  }
+
+  __fetchAddresses(n=1, i=0, cb, recursedAddrs=[]) {
+     // Determine if we need to do a recursive call here. We prefer not to
+      // because they will be much slower, but Ledger paths require it since
+      // they are non-standard.
+      if (n === 0)
+        return cb(null, recursedAddrs);
+      const shouldRecurse = this._hdPathHasInternalVarIdx();
+
       // Make the request to get the requested address
       const addrData = { 
         currency: 'ETH', 
-        startPath: [HARDENED_OFFSET+44, HARDENED_OFFSET+60, HARDENED_OFFSET, 0, i], 
-        n,
-        skipCache: true
-      }
+        startPath: this._getHDPathIndices(i), 
+        n: shouldRecurse ? 1 : n,
+        skipCache: true,
+      };
       this.sdkSession.getAddresses(addrData, (err, addrs) => {
         if (err)
-          return reject(Error(`Error getting addresses: ${err}`));
+          return cb(`Error fetching addresses: ${err}`);
         // Sanity check -- if this returned 0 addresses, handle the error
         if (addrs.length < 1)
-          return reject('No addresses returned');
+          return cb('No addresses returned');
         // Return the addresses we fetched *without* updating state
-        return resolve(addrs);
+        if (shouldRecurse) {
+          return this.__fetchAddresses(n-1, i+1, cb, recursedAddrs.concat(addrs));
+        } else {
+          return cb(null, addrs);
+        }
       })
-    })
   }
 
   _signTxData(txData) {
@@ -478,7 +539,7 @@ class LatticeKeyring extends EventEmitter {
   }
 
   _hasCreds() {
-    return this.creds.deviceID !== null && this.creds.password !== null && this.name;
+    return this.creds.deviceID !== null && this.creds.password !== null && this.appName;
   }
 
   _hasSession() {
@@ -486,14 +547,29 @@ class LatticeKeyring extends EventEmitter {
   }
 
   _genSessionKey() {
+    if (this.name && !this.appName) // Migrate from legacy param if needed
+      this.appName = this.name;
     if (!this._hasCreds())
       throw new Error('No credentials -- cannot create session key!');
     const buf = Buffer.concat([
       Buffer.from(this.creds.password), 
       Buffer.from(this.creds.deviceID), 
-      Buffer.from(this.name)
+      Buffer.from(this.appName)
     ])
     return crypto.createHash('sha256').update(buf).digest();
+  }
+
+  // Determine if an HD path has a variable index internal to it.
+  // e.g. m/44'/60'/x'/0/0 -> true, while m/44'/60'/0'/0/x -> false
+  // This is just a hacky helper to avoid having to recursively call for non-ledger
+  // derivation paths. Ledger is SO ANNOYING TO SUPPORT.
+  _hdPathHasInternalVarIdx() {
+    const path = this.hdPath.split('/').slice(1);
+    for (let i = 0; i < path.length -1; i++) {
+      if (path[i].indexOf('x') > -1)
+        return true;
+    }
+    return false;
   }
 
 }
