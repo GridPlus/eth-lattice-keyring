@@ -189,8 +189,8 @@ class LatticeKeyring extends EventEmitter {
   }
 
   signTypedData(address, msg, opts) {
-    if (opts.version && opts.version !== 'V4')
-      throw new Error(`Only signTypedData V4 messages (EIP712) are supported. Got version ${opts.version}`);
+    if (opts.version && (opts.version !== 'V4' && opts.version !== 'V3'))
+      throw new Error(`Only signTypedData V3 and V4 messages (EIP712) are supported. Got version ${opts.version}`);
     return this.signMessage(address, { payload: msg, protocol: 'eip712' })
   }
 
