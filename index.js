@@ -218,7 +218,7 @@ class LatticeKeyring extends EventEmitter {
             return reject(new Error('No signature returned'));
           // Convert the `v` to a number. It should convert to 0 or 1
           try {
-            let v = (Number(`0x${res.sig.v.toString('hex')}`) - 27).toString(16)
+            let v = res.sig.v.toString('hex');
             if (v.length < 2)
               v = `0${v}`;
             return resolve(`0x${res.sig.r}${res.sig.s}${v}`);
