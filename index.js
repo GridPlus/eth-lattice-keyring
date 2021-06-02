@@ -453,10 +453,6 @@ class LatticeKeyring extends EventEmitter {
       if (!this._hasSession())
         return reject('No SDK session started. Cannot fetch addresses.')
 
-      // If we have already cached the address(es), we don't need to do it again
-      if (this.accounts.length > (i + n))
-        return resolve(this.accounts.slice(i, n));
-
       this.__fetchAddresses(n, i, (err, addrs) => {
         if (err)
           return reject(err);
