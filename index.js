@@ -22,7 +22,8 @@ class LatticeKeyring extends EventEmitter {
   // Keyring API (per `https://github.com/MetaMask/eth-simple-keyring`)
   //-------------------------------------------------------------------
   deserialize (opts = {}) {
-    this.hdPath = opts.hdPath || STANDARD_HD_PATH;
+    if (opts.hdPath)
+      this.hdPath = opts.hdPath;
     if (opts.creds)
       this.creds = opts.creds;
     if (opts.accounts)
@@ -56,6 +57,7 @@ class LatticeKeyring extends EventEmitter {
       name: this.name,  // Legacy; use is deprecated
       network: this.network,
       page: this.page,
+      hdPath: this.hdPath,
     })
   }
 
@@ -342,6 +344,7 @@ class LatticeKeyring extends EventEmitter {
     this.page = 0;
     this.unlockedAccount = 0;
     this.network = null;
+    this.hdPath = STANDARD_HD_PATH;
   }
 
   _getCreds() {
