@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const EventEmitter = require('events').EventEmitter;
+const BN = require('bignumber.js');
 const SDK = require('gridplus-sdk');
 const EthTx = require('@ethereumjs/tx');
 const Common = require('@ethereumjs/common').default;
@@ -161,7 +162,7 @@ class LatticeKeyring extends EventEmitter {
             break;
           default: // legacy
             txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
-            txData.type = 0;
+            txData.type = null;
             break;
         }
         // Lattice firmware v0.11.0 implemented EIP1559 and EIP2930 so for previous verisons
@@ -207,7 +208,8 @@ class LatticeKeyring extends EventEmitter {
 
         // Build the tx for export
         let validatingTx;
-        const chainId = this._getEthereumJsChainId(tx);
+        const _chainId = `0x${this._getEthereumJsChainId(tx).toString('hex')}`;
+        const chainId = new BN(_chainId).toNumber();
         const customNetwork = Common.forCustomChain('mainnet', {
           name: 'notMainnet',
           networkId: chainId,
@@ -618,10 +620,18 @@ class LatticeKeyring extends EventEmitter {
     return false;
   }
 
+  // Get the chainId for whatever object this is.
+  // Returns a hex string without the 0x prefix
   _getEthereumJsChainId(tx) {
     if (typeof tx.getChainId === 'function')
       return tx.getChainId();
-    return tx.chainId || 1;
+    else if (tx.common && typeof tx.common.chainIdBN === 'function')
+      return tx.common.chainIdBN().toString(16);
+    else if (typeof tx.chainId === 'number')
+      return tx.chainId.toString(16);
+    else if (typeof tx.chainId === 'string')
+      return tx.chainId;
+    return '1';
   }
 
 }
