@@ -241,9 +241,12 @@ class LatticeKeyring extends EventEmitter {
     return new Promise((resolve, reject) => {
       this._unlockAndFindAccount(address)
       .then((addrIdx) => {
-        const { payload, protocol } = msg;
-        if (!payload || !protocol)
-          return reject('`payload` and `protocol` fields must be included in the request');
+        let { payload, protocol } = msg;
+        // If the message is not an object we assume it is a legacy signPersonal request
+        if (!payload || !protocol) {
+          payload = msg;
+          protocol = 'signPersonal';
+        }
         const req = {
           currency: 'ETH_MSG',
           data: {
