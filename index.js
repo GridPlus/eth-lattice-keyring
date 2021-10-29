@@ -133,6 +133,9 @@ class LatticeKeyring extends EventEmitter {
     return new Promise((resolve, reject) => {
       this._unlockAndFindAccount(address)
       .then((addrIdx) => {
+        if (!tx.to) {
+          return reject('Contract deployment is not supported by the Lattice at this time. `to` field must be included.')
+        }
         // Build the Lattice request data and make request
         // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
         // To ensure everything plays nicely with gridplus-sdk, we convert everything to hex strings
@@ -256,7 +259,7 @@ class LatticeKeyring extends EventEmitter {
           }
         }
         if (!this._hasSession())
-          return reject('No SDK session started. Cannot sign transaction.')
+          return reject(new Error('No SDK session started. Cannot sign transaction.'));
         this.sdkSession.sign(req, (err, res) => {
           if (err)
             return reject(new Error(err));
@@ -272,6 +275,9 @@ class LatticeKeyring extends EventEmitter {
             return reject(new Error('Invalid signature format returned.'))
           }
         })
+      })
+      .catch((err) => {
+        return reject(new Error(err));
       })
     })
   }
@@ -401,30 +407,29 @@ class LatticeKeyring extends EventEmitter {
       // we need to open a window that lets the user go through the
       // pairing or connection process.
       const name = this.appName ? this.appName : 'Unknown'
-      let base = 'https://wallet.gridplus.io';
-      switch (this.network) {
-        case 'rinkeby':
-          base = 'https://gridplus-web-wallet-dev.herokuapp.com';
-          break;
-        default:
-          break;
-      }
-      let url = `${base}?keyring=${name}`;
-      if (this.network)
-        url += `&network=${this.network}`
+      const base = 'https://wallet.gridplus.io';
+      const url = `${base}?keyring=${name}&forceLogin=true`;
       const popup = window.open(url);
       popup.postMessage('GET_LATTICE_CREDS', base);
+      const popupInterval = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(popupInterval);
+          return reject(new Error('Lattice connector closed.'));
+        }
+      }, 500);
 
       // PostMessage handler
       function receiveMessage(event) {
         // Ensure origin
         if (event.origin !== base)
           return;
+        // Stop the listener
+        clearInterval(popupInterval);
         // Parse response data
         try {
           const data = JSON.parse(event.data);
           if (!data.deviceID || !data.password)
-            return reject(Error('Invalid credentials returned from Lattice.'));
+            return reject(new Error('Invalid credentials returned from Lattice.'));
           return resolve(data);
         } catch (err) {
           return reject(err);
@@ -449,14 +454,14 @@ class LatticeKeyring extends EventEmitter {
         // Save the current wallet UID
         const activeWallet = this.sdkSession.getActiveWallet();
         if (!activeWallet || !activeWallet.uid)
-          return reject("No active wallet");
+          return reject(new Error('No active wallet'));
         const newUID = activeWallet.uid.toString('hex');
         // If we fetched a walletUID that does not match our current one,
         // reset accounts and update the known UID
         if (newUID != this.walletUID) {
           // If we don't want to update data, return an error
           if (updateData === false)
-            return reject('Wallet has changed! Please reconnect.')
+            return reject(new Error('Wallet has changed! Please reconnect.'));
           
           // By default we should clear out accounts and update with
           // the new walletUID. We should NOT fill in the accounts yet,
@@ -475,8 +480,6 @@ class LatticeKeyring extends EventEmitter {
         return resolve();
       try {
         let url = 'https://signing.gridpl.us';
-        if (this.network && this.network !== 'mainnet')
-          url = 'https://signing.staging-gridpl.us'
         if (this.creds.endpoint)
           url = this.creds.endpoint
         const setupData = {
@@ -526,10 +529,10 @@ class LatticeKeyring extends EventEmitter {
       };
       this.sdkSession.getAddresses(addrData, (err, addrs) => {
         if (err)
-          return cb(`Error fetching addresses: ${err}`);
+          return cb(err);
         // Sanity check -- if this returned 0 addresses, handle the error
         if (addrs.length < 1)
-          return cb('No addresses returned');
+          return cb(new Error('No addresses returned'));
         // Return the addresses we fetched *without* updating state
         if (shouldRecurse) {
           return this.__fetchAddresses(n-1, i+1, cb, recursedAddrs.concat(addrs));
@@ -542,12 +545,12 @@ class LatticeKeyring extends EventEmitter {
   _signTxData(txData) {
     return new Promise((resolve, reject) => {
       if (!this._hasSession())
-        return reject('No SDK session started. Cannot sign transaction.')
+        return reject(new Error('No SDK session started. Cannot sign transaction.'));
       this.sdkSession.sign({ currency: 'ETH', data: txData }, (err, res) => {
         if (err)
           return reject(err);
         if (!res.tx)
-          return reject('No transaction payload returned.');
+          return reject(new Error('No transaction payload returned.'));
         // Here we catch an edge case where the requester is asking for an EIP1559
         // transaction but firmware is not updated to support it. We fallback to legacy.
         res.type = txData.type;
