@@ -397,6 +397,49 @@ class LatticeKeyring extends EventEmitter {
     this.hdPath = STANDARD_HD_PATH;
   }
 
+  _openConnectorTab(url) {
+    return new Promise((resolve, reject) => {
+      const browserTab = window.open(url);
+      // Preferred option for Chromium browsers. This extension runs in a window
+      // for Chromium so we can do window-based communication very easily.
+      if (browserTab) {
+        return resolve({ chromium: browserTab });
+      } else if (browser && browser.tabs && browser.tabs.create) {
+        // FireFox extensions do not run in windows, so it will return `null` from
+        // `window.open`. Instead, we need to use the `browser` API to open a tab. 
+        // We will surveille this tab to see if its URL parameters change, which 
+        // will indicate that the user has logged in.
+        browser.tabs.create({url})
+        .then((tab) => {
+          return resolve({ firefox: tab });
+        })
+        .catch((err) => {
+          return reject(new Error('Failed to open Lattice connector.'))
+        })
+      } else {
+        return reject(new Error('Unknown browser context. Cannot open Lattice connector.'))
+      }
+
+    })
+  }
+
+  _findTabById(id) {
+    return new Promise((resolve, reject) => {
+      browser.tabs.query({})
+      .then((tabs) => {
+        tabs.forEach((tab) => {
+          if (tab.id === id) {
+            return resolve(tab);
+          }
+        })
+        return resolve(null);
+      })
+      .catch((err) => {
+        return reject(err);
+      })
+    })
+  }
+  
   _getCreds() {
     return new Promise((resolve, reject) => {
       // We only need to setup if we don't have a deviceID
@@ -409,14 +452,7 @@ class LatticeKeyring extends EventEmitter {
       const name = this.appName ? this.appName : 'Unknown'
       const base = 'https://wallet.gridplus.io';
       const url = `${base}?keyring=${name}&forceLogin=true`;
-      const popup = window.open(url);
-      popup.postMessage('GET_LATTICE_CREDS', base);
-      const popupInterval = setInterval(() => {
-        if (popup.closed) {
-          clearInterval(popupInterval);
-          return reject(new Error('Lattice connector closed.'));
-        }
-      }, 500);
+      let listenInterval;
 
       // PostMessage handler
       function receiveMessage(event) {
@@ -424,18 +460,74 @@ class LatticeKeyring extends EventEmitter {
         if (event.origin !== base)
           return;
         // Stop the listener
-        clearInterval(popupInterval);
-        // Parse response data
         try {
-          const data = JSON.parse(event.data);
-          if (!data.deviceID || !data.password)
+          clearInterval(listenInterval);
+        } catch (err) {
+          console.warn('Failed to close interval', err);
+        }
+        // Parse and return creds
+        try {
+          const creds = JSON.parse(event.data);
+          if (!creds.deviceID || !creds.password)
             return reject(new Error('Invalid credentials returned from Lattice.'));
-          return resolve(data);
+          return resolve(creds);
         } catch (err) {
           return reject(err);
         }
       }
-      window.addEventListener("message", receiveMessage, false);
+
+      // Open the tab
+      this._openConnectorTab(url)
+      .then((conn) => {
+        if (conn.chromium) {
+          // On a Chromium browser we can just listen for a window message
+          window.addEventListener("message", receiveMessage, false);
+          // Watch for the open window closing before creds are sent back
+          listenInterval = setInterval(() => {
+            if (conn.chromium.closed) {
+              clearInterval(listenInterval);
+              return reject(new Error('Lattice connector closed.'));
+            }
+          }, 500);
+        } else if (conn.firefox) {
+          // For Firefox we cannot use `window` in the extension and can't
+          // directly communicate with the tabs very easily so we use a
+          // workaround: listen for changes to the URL, which will contain
+          // the login info.
+          // NOTE: This will only work if have `https://wallet.gridplus.io/*`
+          // host permissions in your manifest file (and also `activeTab` permission)
+          const loginUrlParam = '&loginCache=';
+          listenInterval = setInterval(() => {
+            this._findTabById(conn.firefox.id)
+            .then((tab) => {
+              if (!tab || !tab.url)
+                return;
+              // If the tab we opened contains a new URL param
+              const paramLoc = tab.url.indexOf(loginUrlParam);
+              if (paramLoc < 0) 
+                return;
+              const dataLoc = paramLoc + loginUrlParam.length;
+              // Stop this interval
+              clearInterval(listenInterval);
+              try {
+                // Parse the login data. It is a stringified JSON object 
+                // encoded as a base64 string.
+                const _creds = Buffer.from(tab.url.slice(dataLoc), 'base64').toString();
+                // Close the tab and return the credentials
+                browser.tabs.remove(tab.id)
+                .then(() => {
+                  const creds = JSON.parse(_creds);
+                  if (!creds.deviceID || !creds.password)
+                    return reject(new Error('Invalid credentials returned from Lattice.'));
+                  return resolve(creds);
+                })
+              } catch (err) {
+                return reject('Failed to get login data from Lattice. Please try again.')
+              }
+            })
+          }, 500);
+        }
+      })
     })
   }
 
