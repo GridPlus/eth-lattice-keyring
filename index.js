@@ -500,8 +500,9 @@ class LatticeKeyring extends EventEmitter {
           listenInterval = setInterval(() => {
             this._findTabById(conn.firefox.id)
             .then((tab) => {
-              if (!tab || !tab.url)
-                return;
+              if (!tab || !tab.url) {
+                return reject(new Error('Lattice connector closed.'));
+              }
               // If the tab we opened contains a new URL param
               const paramLoc = tab.url.indexOf(loginUrlParam);
               if (paramLoc < 0) 
