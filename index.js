@@ -30,7 +30,9 @@ class LatticeKeyring extends EventEmitter {
     if (opts.accounts)
       this.accounts = opts.accounts;
     if (opts.accountIndices)
-      this.accountIndices = opts.accountIndices
+      this.accountIndices = opts.accountIndices;
+    if (opts.accountOpts)
+      this.accountOpts = opts.accountOpts;
     if (opts.walletUID)
       this.walletUID = opts.walletUID;
     if (opts.name)  // Legacy; use is deprecated and appName is more descriptive
@@ -53,6 +55,7 @@ class LatticeKeyring extends EventEmitter {
       creds: this.creds,
       accounts: this.accounts,
       accountIndices: this.accountIndices,
+      accountOpts: this.accountOpts,
       walletUID: this.walletUID,
       appName: this.appName,
       name: this.name,  // Legacy; use is deprecated
@@ -67,8 +70,18 @@ class LatticeKeyring extends EventEmitter {
   }
 
   // Initialize a session with the Lattice1 device using the GridPlus SDK
-  unlock(updateData=true) {
+  unlock() {
     return new Promise((resolve, reject) => {
+      // Force compatability. `this.accountOpts` were added after other
+      // state params and must be synced in order for this keyring to function.
+      if ((!this.accountOpts) || 
+          (this.accounts.length > 0 && this.accountOpts.length != this.accounts.length)) 
+      {
+        this.forgetDevice();
+        return reject('Your extension has updated to allow multiple concurrent wallets! ' +
+                      'Accounts have been removed - please add them again now.')
+      }
+
       this._getCreds()
       .then((creds) => {
         if (creds) {
@@ -79,7 +92,7 @@ class LatticeKeyring extends EventEmitter {
         return this._initSession();
       })
       .then(() => {
-        return this._connect(updateData);
+        return this._connect();
       })
       .then(() => {
         return resolve('Unlocked');
@@ -108,11 +121,23 @@ class LatticeKeyring extends EventEmitter {
           return this._fetchAddresses(n, this.unlockedAccount)
         })
         .then((addrs) => {
+          const walletUID = this._getCurrentWalletUID();
           // Add these indices
           addrs.forEach((addr, i) => {
-            if (this.accounts.indexOf(addr) === -1) {
-              this.accounts.push(addr)
-              this.accountIndices.push(this.unlockedAccount+i)
+            let alreadySaved = false;
+            for (let j = 0; j < this.accounts.length; j++) {
+              if ((this.accounts[j] === addr) && 
+                  (this.accountOpts.walletUID[j] === walletUID) &&
+                  (this.accountOpts.hdPath === this.hdPath))
+                alreadySaved = true;
+            }
+            if (!alreadySaved) {
+              this.accounts.push(addr);
+              this.accountIndices.push(this.unlockedAccount+i);
+              this.accountOpts.push({
+                walletUID,
+                hdPath: this.hdPath,
+              })
             }
           })
           return resolve(this.accounts);
@@ -132,13 +157,21 @@ class LatticeKeyring extends EventEmitter {
   signTransaction (address, tx) {
     return new Promise((resolve, reject) => {
       this._unlockAndFindAccount(address)
-      .then((addrIdx) => {
+      .then((accountIdx) => {
         if (!tx.to) {
           return reject('Contract deployment is not supported by the Lattice at this time. `to` field must be included.')
         }
+        // Make sure the account is associated with the current wallet
+        if (this.accountOpts[accountIdx].walletUID !== this._getCurrentWalletUID()) {
+          return reject(new Error('Account on a different wallet. ' +
+                                  'Please switch to the correct wallet on your Lattice.'));
+        }
+
         // Build the Lattice request data and make request
         // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
         // To ensure everything plays nicely with gridplus-sdk, we convert everything to hex strings
+        const addressIdx = this.accountIndices[accountIdx];
+        const addressParentPath = this.accountOpts[accountIdx].hdPath;
         const txData = {
           chainId: `0x${this._getEthereumJsChainId(tx).toString('hex')}` || 1,
           nonce: `0x${tx.nonce.toString('hex')}` || 0,
@@ -146,7 +179,7 @@ class LatticeKeyring extends EventEmitter {
           to: tx.to.toString('hex'),
           value: `0x${tx.value.toString('hex')}`,
           data: tx.data.length === 0 ? null : `0x${tx.data.toString('hex')}`,
-          signerPath: this._getHDPathIndices(addrIdx),
+          signerPath: this._getHDPathIndices(addressParentPath, addressIdx),
         }
         switch (tx._type) {
           case 2: // eip1559
@@ -243,19 +276,26 @@ class LatticeKeyring extends EventEmitter {
   signMessage(address, msg) {
     return new Promise((resolve, reject) => {
       this._unlockAndFindAccount(address)
-      .then((addrIdx) => {
+      .then((accountIdx) => {
+        // Make sure the account is associated with the current wallet
+        if (this.accountOpts[accountIdx].walletUID !== this._getCurrentWalletUID()) {
+          return reject(new Error('Account associated with different wallet. ' +
+                                  'Please switch to this wallet on your Lattice to continue.'));
+        }
         let { payload, protocol } = msg;
         // If the message is not an object we assume it is a legacy signPersonal request
         if (!payload || !protocol) {
           payload = msg;
           protocol = 'signPersonal';
         }
+        const addressIdx = this.accountIndices[accountIdx];
+        const addressParentPath = this.accountOpts[accountIdx].hdPath;
         const req = {
           currency: 'ETH_MSG',
           data: {
             protocol,
             payload,
-            signerPath: this._getHDPathIndices(addrIdx),
+            signerPath: this._getHDPathIndices(addressParentPath, addressIdx),
           }
         }
         if (!this._hasSession())
@@ -287,10 +327,14 @@ class LatticeKeyring extends EventEmitter {
   }
 
   removeAccount(address) {
-    // We only allow one account at a time, so removing any account
-    // should result in a state reset. The user will need to reconnect
-    // to the Lattice
-    this.forgetDevice();
+    this.accounts.forEach((account, i) => {
+      if (account.toLowerCase() === address.toLowerCase()) {
+        this.accounts.splice(i, 1);
+        this.accountIndices.splice(i, 1);
+        this.accountOpts.splice(i, 1);
+        return;
+      }
+    })
   }
 
   getFirstPage() {
@@ -321,26 +365,21 @@ class LatticeKeyring extends EventEmitter {
   // Note that this is the BIP39 path index, not the index in the address cache.
   _unlockAndFindAccount(address) {
     return new Promise((resolve, reject) => {
-      // NOTE: We are passing `false` here because we do NOT want
-      // state data to be updated as a result of a transaction request.
-      // It is possible the user inserted or removed a SafeCard and
-      // will not be able to sign this transaction. If that is the
-      // case, we just want to return an error message
-      this.unlock(false)
+      this.unlock()
       .then(() => {
         return this.getAccounts()
       })
       .then((addrs) => {
         // Find the signer in our current set of accounts
         // If we can't find it, return an error
-        let addrIdx = null;
+        let accountIdx = null;
         addrs.forEach((addr, i) => {
           if (address.toLowerCase() === addr.toLowerCase())
-            addrIdx = i;
+            accountIdx = i;
         })
-        if (addrIdx === null)
+        if (accountIdx === null)
           return reject('Signer not present');
-        return resolve(this.accountIndices[addrIdx]);
+        return resolve(accountIdx);
       })
       .catch((err) => {
         return reject(err);
@@ -348,8 +387,8 @@ class LatticeKeyring extends EventEmitter {
     })
   }
 
-  _getHDPathIndices(insertIdx=0) {
-    const path = this.hdPath.split('/').slice(1);
+  _getHDPathIndices(hdPath, insertIdx=0) {
+    const path = hdPath.split('/').slice(1);
     const indices = [];
     let usedX = false;
     path.forEach((_idx) => {
@@ -383,6 +422,7 @@ class LatticeKeyring extends EventEmitter {
   _resetDefaults() {
     this.accounts = [];
     this.accountIndices = [];
+    this.accountOpts = [];
     this.isLocked = true;
     this.creds = {
       deviceID: null,
@@ -535,11 +575,7 @@ class LatticeKeyring extends EventEmitter {
   // [re]connect to the Lattice. This should be done frequently to ensure
   // the expected wallet UID is still the one active in the Lattice.
   // This will handle SafeCard insertion/removal events.
-  // updateData - true if you want to overwrite walletUID and accounts in
-  //              the event that we find we are not synced.
-  //              If left false and we notice a new walletUID, we will
-  //              return an error.
-  _connect(updateData) {
+  _connect() {
     return new Promise((resolve, reject) => {
       this.sdkSession.connect(this.creds.deviceID, (err) => {
         if (err)
@@ -552,14 +588,6 @@ class LatticeKeyring extends EventEmitter {
         // If we fetched a walletUID that does not match our current one,
         // reset accounts and update the known UID
         if (newUID != this.walletUID) {
-          // If we don't want to update data, return an error
-          if (updateData === false)
-            return reject(new Error('Wallet has changed! Please reconnect.'));
-          
-          // By default we should clear out accounts and update with
-          // the new walletUID. We should NOT fill in the accounts yet,
-          // as we reserve that functionality to `addAccounts`
-          this.accounts = [];
           this.walletUID = newUID;
         }
         return resolve();
@@ -616,7 +644,7 @@ class LatticeKeyring extends EventEmitter {
       // Make the request to get the requested address
       const addrData = { 
         currency: 'ETH', 
-        startPath: this._getHDPathIndices(i), 
+        startPath: this._getHDPathIndices(this.hdPath, i), 
         n: shouldRecurse ? 1 : n,
         skipCache: true,
       };
@@ -731,6 +759,12 @@ class LatticeKeyring extends EventEmitter {
     else if (typeof tx.chainId === 'string')
       return tx.chainId;
     return '1';
+  }
+
+  _getCurrentWalletUID() {
+    if (!this.sdkSession)
+      return null;
+    return this.sdkSession.getActiveWallet().uid.toString('hex');
   }
 
 }
