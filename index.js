@@ -78,8 +78,10 @@ class LatticeKeyring extends EventEmitter {
           (this.accounts.length > 0 && this.accountOpts.length != this.accounts.length)) 
       {
         this.forgetDevice();
-        return reject('Your extension has updated to allow multiple concurrent wallets! ' +
-                      'Accounts have been removed - please add them again now.')
+        return reject(new Error(
+          'You can now add multiple Lattice and SafeCard accounts at the same time! '
+          'Your accounts have been cleared. Please press Continue to add them back in.'
+        ));
       }
 
       this._getCreds()
