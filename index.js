@@ -79,7 +79,7 @@ class LatticeKeyring extends EventEmitter {
       {
         this.forgetDevice();
         return reject(new Error(
-          'You can now add multiple Lattice and SafeCard accounts at the same time! '
+          'You can now add multiple Lattice and SafeCard accounts at the same time! ' +
           'Your accounts have been cleared. Please press Continue to add them back in.'
         ));
       }
@@ -129,8 +129,8 @@ class LatticeKeyring extends EventEmitter {
             let alreadySaved = false;
             for (let j = 0; j < this.accounts.length; j++) {
               if ((this.accounts[j] === addr) && 
-                  (this.accountOpts.walletUID[j] === walletUID) &&
-                  (this.accountOpts.hdPath === this.hdPath))
+                  (this.accountOpts[j].walletUID === walletUID) &&
+                  (this.accountOpts[j].hdPath === this.hdPath))
                 alreadySaved = true;
             }
             if (!alreadySaved) {
@@ -161,14 +161,9 @@ class LatticeKeyring extends EventEmitter {
       this._unlockAndFindAccount(address)
       .then((accountIdx) => {
         if (!tx.to) {
-          return reject('Contract deployment is not supported by the Lattice at this time. `to` field must be included.')
+          return reject('Contract deployment is not supported by the Lattice at this time. ' +
+                        '`to` field must be included.')
         }
-        // Make sure the account is associated with the current wallet
-        if (this.accountOpts[accountIdx].walletUID !== this._getCurrentWalletUID()) {
-          return reject(new Error('Account on a different wallet. ' +
-                                  'Please switch to the correct wallet on your Lattice.'));
-        }
-
         // Build the Lattice request data and make request
         // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
         // To ensure everything plays nicely with gridplus-sdk, we convert everything to hex strings
@@ -279,11 +274,6 @@ class LatticeKeyring extends EventEmitter {
     return new Promise((resolve, reject) => {
       this._unlockAndFindAccount(address)
       .then((accountIdx) => {
-        // Make sure the account is associated with the current wallet
-        if (this.accountOpts[accountIdx].walletUID !== this._getCurrentWalletUID()) {
-          return reject(new Error('Account associated with different wallet. ' +
-                                  'Please switch to this wallet on your Lattice to continue.'));
-        }
         let { payload, protocol } = msg;
         // If the message is not an object we assume it is a legacy signPersonal request
         if (!payload || !protocol) {
@@ -381,6 +371,11 @@ class LatticeKeyring extends EventEmitter {
         })
         if (accountIdx === null)
           return reject('Signer not present');
+        // Make sure the account is associated with the current wallet
+        if (this.accountOpts[accountIdx].walletUID !== this._getCurrentWalletUID()) {
+          return reject(new Error('Account on a different wallet. ' +
+                                  'Please switch to the correct wallet on your Lattice.'));
+        }
         return resolve(accountIdx);
       })
       .catch((err) => {
