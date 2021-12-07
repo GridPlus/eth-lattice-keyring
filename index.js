@@ -84,6 +84,15 @@ class LatticeKeyring extends EventEmitter {
         ));
       }
 
+      if (this.forceReconnect) {
+        this.creds = {
+          deviceID: null,
+          password: null,
+          endpoint: null,
+        }
+        this.forceReconnect = false;
+      }
+
       this._getCreds()
       .then((creds) => {
         if (creds) {
@@ -328,6 +337,7 @@ class LatticeKeyring extends EventEmitter {
 
   getFirstPage() {
     this.page = 0;
+    this.forceReconnect = true;
     return this._getPage(0);
   }
 
