@@ -160,20 +160,17 @@ class LatticeKeyring extends EventEmitter {
     return new Promise((resolve, reject) => {
       this._unlockAndFindAccount(address)
       .then((accountIdx) => {
-        if (!tx.to) {
-          return reject('Contract deployment is not supported by the Lattice at this time. ' +
-                        '`to` field must be included.')
-        }
         // Build the Lattice request data and make request
         // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
         // To ensure everything plays nicely with gridplus-sdk, we convert everything to hex strings
         const addressIdx = this.accountIndices[accountIdx];
         const addressParentPath = this.accountOpts[accountIdx].hdPath;
+        const to = !tx.to ? null : tx.to.toString('hex');
         const txData = {
           chainId: `0x${this._getEthereumJsChainId(tx).toString('hex')}` || 1,
           nonce: `0x${tx.nonce.toString('hex')}` || 0,
           gasLimit: `0x${tx.gasLimit.toString('hex')}`,
-          to: tx.to.toString('hex'),
+          to,
           value: `0x${tx.value.toString('hex')}`,
           data: tx.data.length === 0 ? null : `0x${tx.data.toString('hex')}`,
           signerPath: this._getHDPathIndices(addressParentPath, addressIdx),
@@ -482,7 +479,6 @@ class LatticeKeyring extends EventEmitter {
       // We only need to setup if we don't have a deviceID
       if (this._hasCreds())
         return resolve();
-
       // If we are not aware of what Lattice we should be talking to,
       // we need to open a window that lets the user go through the
       // pairing or connection process.
