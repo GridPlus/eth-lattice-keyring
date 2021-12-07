@@ -25,6 +25,8 @@ class LatticeKeyring extends EventEmitter {
   deserialize (opts = {}) {
     if (opts.hdPath)
       this.hdPath = opts.hdPath;
+    if (opts.creds)
+      this.creds = opts.creds;
     if (opts.accounts)
       this.accounts = opts.accounts;
     if (opts.accountIndices)
@@ -50,6 +52,7 @@ class LatticeKeyring extends EventEmitter {
 
   serialize() {
     return Promise.resolve({
+      creds: this.creds,
       accounts: this.accounts,
       accountIndices: this.accountIndices,
       accountOpts: this.accountOpts,
