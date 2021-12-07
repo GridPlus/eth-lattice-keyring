@@ -487,7 +487,7 @@ class LatticeKeyring extends EventEmitter {
       // we need to open a window that lets the user go through the
       // pairing or connection process.
       const name = this.appName ? this.appName : 'Unknown'
-      const base = 'https://wallet.gridplus.io';
+      const base = 'https://lattice.gridplus.io';
       const url = `${base}?keyring=${name}&forceLogin=true`;
       let listenInterval;
 
@@ -531,7 +531,7 @@ class LatticeKeyring extends EventEmitter {
           // directly communicate with the tabs very easily so we use a
           // workaround: listen for changes to the URL, which will contain
           // the login info.
-          // NOTE: This will only work if have `https://wallet.gridplus.io/*`
+          // NOTE: This will only work if have `https://lattice.gridplus.io/*`
           // host permissions in your manifest file (and also `activeTab` permission)
           const loginUrlParam = '&loginCache=';
           listenInterval = setInterval(() => {
