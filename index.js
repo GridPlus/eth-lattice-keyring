@@ -160,10 +160,6 @@ class LatticeKeyring extends EventEmitter {
     return new Promise((resolve, reject) => {
       this._unlockAndFindAccount(address)
       .then((accountIdx) => {
-        if (!tx.to) {
-          return reject('Contract deployment is not supported by the Lattice at this time. ' +
-                        '`to` field must be included.')
-        }
         // Build the Lattice request data and make request
         // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
         // To ensure everything plays nicely with gridplus-sdk, we convert everything to hex strings
