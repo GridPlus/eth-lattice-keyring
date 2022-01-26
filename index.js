@@ -158,7 +158,7 @@ class LatticeKeyring extends EventEmitter {
 
   signTransaction (address, tx) {
     return new Promise((resolve, reject) => {
-      this._unlockAndFindAccount(address)
+      this._findSignerIdx(address)
       .then((accountIdx) => {
         // Build the Lattice request data and make request
         // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
@@ -200,7 +200,6 @@ class LatticeKeyring extends EventEmitter {
         const forceLegacyTx = this.sdkSession.fwVersion[2] < 1 && 
                               this.sdkSession.fwVersion[1] < 11;
         if (forceLegacyTx && txData.type === 2) {
-          console.warn('Lattice firmware must be >=0.11.0 to support EIP1559 transactions. Revering to legacy.');
           txData.gasPrice = txData.maxFeePerGas;
           txData.revertToLegacy = true;
           delete txData.type;
@@ -208,7 +207,6 @@ class LatticeKeyring extends EventEmitter {
           delete txData.maxPriorityFeePerGas;
           delete txData.accessList;
         } else if (forceLegacyTx && txData.type === 1) {
-          console.warn('Lattice firmware must be >=0.11.0 to support EIP2930 transactions. Reverting to legacy.');
           txData.revertToLegacy = true;
           delete txData.type;
           delete txData.accessList;
@@ -268,7 +266,7 @@ class LatticeKeyring extends EventEmitter {
 
   signMessage(address, msg) {
     return new Promise((resolve, reject) => {
-      this._unlockAndFindAccount(address)
+      this._findSignerIdx(address)
       .then((accountIdx) => {
         let { payload, protocol } = msg;
         // If the message is not an object we assume it is a legacy signPersonal request
@@ -351,9 +349,9 @@ class LatticeKeyring extends EventEmitter {
   //-------------------------------------------------------------------
   // Find the account index of the requested address.
   // Note that this is the BIP39 path index, not the index in the address cache.
-  _unlockAndFindAccount(address) {
+  _findSignerIdx(address) {
     return new Promise((resolve, reject) => {
-      this.unlock()
+      this._ensureCurrentWalletUID()
       .then(() => {
         return this.getAccounts()
       })
@@ -492,14 +490,10 @@ class LatticeKeyring extends EventEmitter {
         // Ensure origin
         if (event.origin !== base)
           return;
-        // Stop the listener
         try {
+          // Stop the listener
           clearInterval(listenInterval);
-        } catch (err) {
-          console.warn('Failed to close interval', err);
-        }
-        // Parse and return creds
-        try {
+          // Parse and return creds
           const creds = JSON.parse(event.data);
           if (!creds.deviceID || !creds.password)
             return reject(new Error('Invalid credentials returned from Lattice.'));
@@ -758,6 +752,27 @@ class LatticeKeyring extends EventEmitter {
     if (!this.sdkSession)
       return null;
     return this.sdkSession.getActiveWallet().uid.toString('hex');
+  }
+
+  // Make sure we have an SDK connection and, therefore, an active wallet UID.
+  // If we do not, force an unlock, which adds ~5 seconds to the request.
+  _ensureCurrentWalletUID() {
+    return new Promise((resolve, reject) => {
+      if (!!this._getCurrentWalletUID()) {
+        return resolve();
+      }
+      this.unlock()
+      .then(() => {
+        if (!!this._getCurrentWalletUID()) {
+          return resolve()
+        } else {
+          return reject('Could not access Lattice wallet. Please re-connect.')
+        }
+      })
+      .catch((err) => {
+        return reject(err);
+      })
+    })
   }
 
 }
