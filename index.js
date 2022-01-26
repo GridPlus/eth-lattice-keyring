@@ -160,59 +160,63 @@ class LatticeKeyring extends EventEmitter {
     return new Promise((resolve, reject) => {
       this._findSignerIdx(address)
       .then((accountIdx) => {
-        // Build the Lattice request data and make request
-        // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
-        // To ensure everything plays nicely with gridplus-sdk, we convert everything to hex strings
-        const addressIdx = this.accountIndices[accountIdx];
-        const addressParentPath = this.accountOpts[accountIdx].hdPath;
-        const txData = {
-          chainId: `0x${this._getEthereumJsChainId(tx).toString('hex')}` || 1,
-          nonce: `0x${tx.nonce.toString('hex')}` || 0,
-          gasLimit: `0x${tx.gasLimit.toString('hex')}`,
-          to: tx.to.toString('hex'),
-          value: `0x${tx.value.toString('hex')}`,
-          data: tx.data.length === 0 ? null : `0x${tx.data.toString('hex')}`,
-          signerPath: this._getHDPathIndices(addressParentPath, addressIdx),
+        try {
+          // Build the Lattice request data and make request
+          // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
+          // To ensure everything plays nicely with gridplus-sdk, we convert everything to hex strings
+          const addressIdx = this.accountIndices[accountIdx];
+          const addressParentPath = this.accountOpts[accountIdx].hdPath;
+          const txData = {
+            chainId: `0x${this._getEthereumJsChainId(tx).toString('hex')}` || 1,
+            nonce: `0x${tx.nonce.toString('hex')}` || 0,
+            gasLimit: `0x${tx.gasLimit.toString('hex')}`,
+            to: !!tx.to ? tx.to.toString('hex') : null, // null for contract deployments
+            value: `0x${tx.value.toString('hex')}`,
+            data: tx.data.length === 0 ? null : `0x${tx.data.toString('hex')}`,
+            signerPath: this._getHDPathIndices(addressParentPath, addressIdx),
+          }
+          switch (tx._type) {
+            case 2: // eip1559
+              if ((tx.maxPriorityFeePerGas === null || tx.maxFeePerGas === null) ||
+                  (tx.maxPriorityFeePerGas === undefined || tx.maxFeePerGas === undefined))
+                throw new Error('`maxPriorityFeePerGas` and `maxFeePerGas` must be included for EIP1559 transactions.');
+              txData.maxPriorityFeePerGas = `0x${tx.maxPriorityFeePerGas.toString('hex')}`;
+              txData.maxFeePerGas = `0x${tx.maxFeePerGas.toString('hex')}`;
+              txData.accessList = tx.accessList || [];
+              txData.type = 2;
+              break;
+            case 1: // eip2930
+              txData.accessList = tx.accessList || [];
+              txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
+              txData.type = 1;
+              break;
+            default: // legacy
+              txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
+              txData.type = null;
+              break;
+          }
+          // Lattice firmware v0.11.0 implemented EIP1559 and EIP2930 so for previous verisons
+          // we need to overwrite relevant params and revert to legacy type.
+          // Note: `this.sdkSession.fwVersion is of format [fix, minor, major, reserved]
+          const forceLegacyTx = this.sdkSession.fwVersion[2] < 1 && 
+                                this.sdkSession.fwVersion[1] < 11;
+          if (forceLegacyTx && txData.type === 2) {
+            txData.gasPrice = txData.maxFeePerGas;
+            txData.revertToLegacy = true;
+            delete txData.type;
+            delete txData.maxFeePerGas;
+            delete txData.maxPriorityFeePerGas;
+            delete txData.accessList;
+          } else if (forceLegacyTx && txData.type === 1) {
+            txData.revertToLegacy = true;
+            delete txData.type;
+            delete txData.accessList;
+          }
+          // Get the signature
+          return this._signTxData(txData)
+        } catch (err) {
+          throw new Error(`Failed to build transaction.`)
         }
-        switch (tx._type) {
-          case 2: // eip1559
-            if ((tx.maxPriorityFeePerGas === null || tx.maxFeePerGas === null) ||
-                (tx.maxPriorityFeePerGas === undefined || tx.maxFeePerGas === undefined))
-              throw new Error('`maxPriorityFeePerGas` and `maxFeePerGas` must be included for EIP1559 transactions.');
-            txData.maxPriorityFeePerGas = `0x${tx.maxPriorityFeePerGas.toString('hex')}`;
-            txData.maxFeePerGas = `0x${tx.maxFeePerGas.toString('hex')}`;
-            txData.accessList = tx.accessList || [];
-            txData.type = 2;
-            break;
-          case 1: // eip2930
-            txData.accessList = tx.accessList || [];
-            txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
-            txData.type = 1;
-            break;
-          default: // legacy
-            txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
-            txData.type = null;
-            break;
-        }
-        // Lattice firmware v0.11.0 implemented EIP1559 and EIP2930 so for previous verisons
-        // we need to overwrite relevant params and revert to legacy type.
-        // Note: `this.sdkSession.fwVersion is of format [fix, minor, major, reserved]
-        const forceLegacyTx = this.sdkSession.fwVersion[2] < 1 && 
-                              this.sdkSession.fwVersion[1] < 11;
-        if (forceLegacyTx && txData.type === 2) {
-          txData.gasPrice = txData.maxFeePerGas;
-          txData.revertToLegacy = true;
-          delete txData.type;
-          delete txData.maxFeePerGas;
-          delete txData.maxPriorityFeePerGas;
-          delete txData.accessList;
-        } else if (forceLegacyTx && txData.type === 1) {
-          txData.revertToLegacy = true;
-          delete txData.type;
-          delete txData.accessList;
-        }
-        // Get the signature
-        return this._signTxData(txData)
       })
       .then((signedTx) => {
         // Add the sig params. `signedTx = { sig: { v, r, s }, tx, txHash}`
