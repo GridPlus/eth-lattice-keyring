@@ -153,7 +153,19 @@ class LatticeKeyring extends EventEmitter {
 
   // Return the local store of addresses
   getAccounts() {
-    return Promise.resolve(this.accounts ? this.accounts.slice() : [].slice());
+    return new Promise((resolve, reject) => {
+      this._ensureCurrentWalletUID()
+      .then(() => {
+        return resolve(this.accounts ? this.accounts.slice() : [].slice());
+      })
+      .catch((err) => {
+        // Rather than throw an error here, we should still unlock the
+        // extension and return whatever accounts we currently have.
+        // If we threw an error, it would lock people out of the extension
+        // if they could not talk to their Lattice.
+        return resolve(this.accounts ? this.accounts.slice() : [].slice());
+      })
+    })
   }
 
   signTransaction (address, tx) {
@@ -355,10 +367,7 @@ class LatticeKeyring extends EventEmitter {
   // Note that this is the BIP39 path index, not the index in the address cache.
   _findSignerIdx(address) {
     return new Promise((resolve, reject) => {
-      this._ensureCurrentWalletUID()
-      .then(() => {
-        return this.getAccounts()
-      })
+      this.getAccounts()
       .then((addrs) => {
         // Find the signer in our current set of accounts
         // If we can't find it, return an error
@@ -588,8 +597,9 @@ class LatticeKeyring extends EventEmitter {
 
   _initSession() {
     return new Promise((resolve, reject) => {
-      if (this._hasSession())
+      if (this._hasSession()) {
         return resolve();
+      }
       try {
         let url = 'https://signing.gridpl.us';
         if (this.creds.endpoint)
@@ -753,8 +763,11 @@ class LatticeKeyring extends EventEmitter {
   }
 
   _getCurrentWalletUID() {
-    if (!this.sdkSession)
+    if (!this.sdkSession) {
       return null;
+    } else if (!this.sdkSession.getActiveWallet()) {
+      return null;
+    }
     return this.sdkSession.getActiveWallet().uid.toString('hex');
   }
 
