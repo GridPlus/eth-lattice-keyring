@@ -9,7 +9,9 @@ const keyringType = 'Lattice Hardware';
 const HARDENED_OFFSET = 0x80000000;
 const PER_PAGE = 5;
 const CLOSE_CODE = -1000;
-const STANDARD_HD_PATH = `m/44'/60'/0'/0/x`
+const STANDARD_HD_PATH = `m/44'/60'/0'/0/x`;
+const SDK_TIMEOUT = 120000;
+const CONNECT_TIMEOUT = 20000;
 
 class LatticeKeyring extends EventEmitter {
   constructor (opts={}) {
@@ -51,6 +53,7 @@ class LatticeKeyring extends EventEmitter {
   }
 
   serialize() {
+    this.triedConnection = false;
     return Promise.resolve({
       creds: this.creds,
       accounts: this.accounts,
@@ -65,8 +68,10 @@ class LatticeKeyring extends EventEmitter {
     })
   }
 
+  // Deterimine if we have a connection to the Lattice and an existing wallet UID
+  // against which to make requests.
   isUnlocked () {
-    return this._hasCreds() && this._hasSession()
+    return !!this._getCurrentWalletUID()
   }
 
   // Initialize a session with the Lattice1 device using the GridPlus SDK
@@ -82,6 +87,10 @@ class LatticeKeyring extends EventEmitter {
           'You can now add multiple Lattice and SafeCard accounts at the same time! ' +
           'Your accounts have been cleared. Please press Continue to add them back in.'
         ));
+      }
+
+      if (this.isUnlocked()) {
+        return resolve('Unlocked');
       }
 
       this._getCreds()
@@ -151,9 +160,41 @@ class LatticeKeyring extends EventEmitter {
     })
   }
 
-  // Return the local store of addresses
+  // Return the local store of addresses. This gets called when the extension unlocks.
   getAccounts() {
-    return Promise.resolve(this.accounts ? this.accounts.slice() : [].slice());
+    return new Promise((resolve, reject) => {
+      const accounts = this.accounts ? this.accounts.slice() : [].slice();
+      // Exit without connecting?
+      // * If we have no credentials, just return the accounts. It shouldn't be
+      // possible to have addresses without credentials, i.e. it should be an
+      // empty array.
+      // * If we have already tried to connect, we don't need to do it again --
+      // just return the accounts. Note that this proceeds regardless of the
+      // connection result. If the user's device is offline then the extension
+      // will still unlock but the device won't be reachable until it tries to
+      // connect again.
+      if (!this._hasCreds() || this.triedConnection) {
+        return resolve(accounts);
+      }
+      // Since this is called when the extension unlocks, we should make sure
+      // we have a connection with the user's Lattice. If no connection is found
+      // this will attempt to create one. The error will not be handled in this
+      // function because the user could have their Lattice unplugged and may
+      // want to use a different account on MetaMask.
+      this._ensureCurrentWalletUID()
+      .then(() => {
+        this.triedConnection = true;
+        return resolve(accounts);
+      })
+      .catch((err) => {
+        // Rather than throw an error here, we should still unlock the
+        // extension and return whatever accounts we currently have.
+        // If we threw an error, it would lock people out of the extension
+        // if they could not talk to their Lattice.
+        this.triedConnection = true;
+        return resolve(accounts);
+      })
+    })
   }
 
   signTransaction (address, tx) {
@@ -288,8 +329,8 @@ class LatticeKeyring extends EventEmitter {
             signerPath: this._getHDPathIndices(addressParentPath, addressIdx),
           }
         }
-        if (!this._hasSession())
-          return reject(new Error('No SDK session started. Cannot sign transaction.'));
+        if (!this.isUnlocked())
+          return reject(new Error('No connection to Lattice. Could not send request.'));
         this.sdkSession.sign(req, (err, res) => {
           if (err)
             return reject(new Error(err));
@@ -568,7 +609,12 @@ class LatticeKeyring extends EventEmitter {
   // This will handle SafeCard insertion/removal events.
   _connect() {
     return new Promise((resolve, reject) => {
+      // Attempt to connect with a Lattice using a shorter timeout. If
+      // the device is unplugged it will time out and we don't need to wait
+      // 2 minutes for that to happen.
+      this.sdkSession.timeout = CONNECT_TIMEOUT;
       this.sdkSession.connect(this.creds.deviceID, (err) => {
+        this.sdkSession.timeout = SDK_TIMEOUT;
         if (err)
           return reject(err);
         // Save the current wallet UID
@@ -588,8 +634,9 @@ class LatticeKeyring extends EventEmitter {
 
   _initSession() {
     return new Promise((resolve, reject) => {
-      if (this._hasSession())
+      if (this.isUnlocked()) {
         return resolve();
+      }
       try {
         let url = 'https://signing.gridpl.us';
         if (this.creds.endpoint)
@@ -598,7 +645,7 @@ class LatticeKeyring extends EventEmitter {
           name: this.appName,
           baseUrl: url,
           crypto,
-          timeout: 120000,
+          timeout: SDK_TIMEOUT,
           privKey: this._genSessionKey(),
           network: this.network
         }
@@ -612,8 +659,8 @@ class LatticeKeyring extends EventEmitter {
 
   _fetchAddresses(n=1, i=0, recursedAddrs=[]) {
     return new Promise((resolve, reject) => {
-      if (!this._hasSession())
-        return reject('No SDK session started. Cannot fetch addresses.')
+      if (!this.isUnlocked())
+        return reject('No connection to Lattice. Cannot fetch addresses.')
 
       this.__fetchAddresses(n, i, (err, addrs) => {
         if (err)
@@ -656,8 +703,8 @@ class LatticeKeyring extends EventEmitter {
 
   _signTxData(txData) {
     return new Promise((resolve, reject) => {
-      if (!this._hasSession())
-        return reject(new Error('No SDK session started. Cannot sign transaction.'));
+      if (!this.isUnlocked())
+        return reject(new Error('No connection to Lattice. Cannot sign transaction.'));
       this.sdkSession.sign({ currency: 'ETH', data: txData }, (err, res) => {
         if (err)
           return reject(err);
@@ -708,10 +755,6 @@ class LatticeKeyring extends EventEmitter {
     return this.creds.deviceID !== null && this.creds.password !== null && this.appName;
   }
 
-  _hasSession() {
-    return this.sdkSession && this.walletUID;
-  }
-
   _genSessionKey() {
     if (this.name && !this.appName) // Migrate from legacy param if needed
       this.appName = this.name;
@@ -753,8 +796,11 @@ class LatticeKeyring extends EventEmitter {
   }
 
   _getCurrentWalletUID() {
-    if (!this.sdkSession)
+    if (!this.sdkSession) {
       return null;
+    } else if (!this.sdkSession.getActiveWallet()) {
+      return null;
+    }
     return this.sdkSession.getActiveWallet().uid.toString('hex');
   }
 
