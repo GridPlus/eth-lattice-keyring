@@ -164,12 +164,16 @@ class LatticeKeyring extends EventEmitter {
   getAccounts() {
     return new Promise((resolve, reject) => {
       const accounts = this.accounts ? this.accounts.slice() : [].slice();
-      // If we have already tried to connect, we don't need to do it again --
+      // Exit without connecting?
+      // * If we have no credentials, just return the accounts. It shouldn't be
+      // possible to have addresses without credentials, i.e. it should be an
+      // empty array.
+      // * If we have already tried to connect, we don't need to do it again --
       // just return the accounts. Note that this proceeds regardless of the
       // connection result. If the user's device is offline then the extension
       // will still unlock but the device won't be reachable until it tries to
       // connect again.
-      if (this.triedConnection) {
+      if (!this._hasCreds() || this.triedConnection) {
         return resolve(accounts);
       }
       // Since this is called when the extension unlocks, we should make sure
