@@ -1,6 +1,6 @@
 {
   "name": "eth-lattice-keyring",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "description": "Keyring for connecting to the Lattice1 hardware wallet",
   "main": "index.js",
   "scripts": {
@@ -21,6 +21,6 @@
     "@ethereumjs/tx": "^3.1.1",
     "bignumber.js": "^9.0.1",
     "ethereumjs-util": "^7.0.10",
-    "gridplus-sdk": "^0.9.6"
+    "gridplus-sdk": "^0.9.7"
   }
 }
