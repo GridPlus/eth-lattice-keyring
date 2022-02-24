@@ -53,7 +53,6 @@ class LatticeKeyring extends EventEmitter {
   }
 
   serialize() {
-    this.triedConnection = false;
     return Promise.resolve({
       creds: this.creds,
       accounts: this.accounts,
@@ -162,39 +161,7 @@ class LatticeKeyring extends EventEmitter {
 
   // Return the local store of addresses. This gets called when the extension unlocks.
   getAccounts() {
-    return new Promise((resolve, reject) => {
-      const accounts = this.accounts ? this.accounts.slice() : [].slice();
-      // Exit without connecting?
-      // * If we have no credentials, just return the accounts. It shouldn't be
-      // possible to have addresses without credentials, i.e. it should be an
-      // empty array.
-      // * If we have already tried to connect, we don't need to do it again --
-      // just return the accounts. Note that this proceeds regardless of the
-      // connection result. If the user's device is offline then the extension
-      // will still unlock but the device won't be reachable until it tries to
-      // connect again.
-      if (!this._hasCreds() || this.triedConnection) {
-        return resolve(accounts);
-      }
-      // Since this is called when the extension unlocks, we should make sure
-      // we have a connection with the user's Lattice. If no connection is found
-      // this will attempt to create one. The error will not be handled in this
-      // function because the user could have their Lattice unplugged and may
-      // want to use a different account on MetaMask.
-      this._ensureCurrentWalletUID()
-      .then(() => {
-        this.triedConnection = true;
-        return resolve(accounts);
-      })
-      .catch((err) => {
-        // Rather than throw an error here, we should still unlock the
-        // extension and return whatever accounts we currently have.
-        // If we threw an error, it would lock people out of the extension
-        // if they could not talk to their Lattice.
-        this.triedConnection = true;
-        return resolve(accounts);
-      })
-    })
+    return Promise.resolve(this.accounts ? this.accounts.slice() : [].slice());
   }
 
   signTransaction (address, tx) {
@@ -291,7 +258,7 @@ class LatticeKeyring extends EventEmitter {
         validatingTx = EthTx.TransactionFactory.fromTxData(txToReturn, {
           common: customNetwork, freeze: Object.isFrozen(tx)
         })
-        return resolve(validatingTx)
+        return resolve(validatingTx);
       })
       .catch((err) => {
         return reject(new Error(err));
@@ -332,15 +299,21 @@ class LatticeKeyring extends EventEmitter {
         if (!this.isUnlocked())
           return reject(new Error('No connection to Lattice. Could not send request.'));
         this.sdkSession.sign(req, (err, res) => {
-          if (err)
+          if (err) {
             return reject(new Error(err));
-          if (!res.sig)
+          }
+          if (!this._syncCurrentWalletUID()) {
+            return reject('No active wallet.');
+          }
+          if (!res.sig) {
             return reject(new Error('No signature returned'));
+          }
           // Convert the `v` to a number. It should convert to 0 or 1
           try {
             let v = res.sig.v.toString('hex');
-            if (v.length < 2)
+            if (v.length < 2) {
               v = `0${v}`;
+            }
             return resolve(`0x${res.sig.r}${res.sig.s}${v}`);
           } catch (err) {
             return reject(new Error('Invalid signature format returned.'))
@@ -615,17 +588,11 @@ class LatticeKeyring extends EventEmitter {
       this.sdkSession.timeout = CONNECT_TIMEOUT;
       this.sdkSession.connect(this.creds.deviceID, (err) => {
         this.sdkSession.timeout = SDK_TIMEOUT;
-        if (err)
+        if (err) {
           return reject(err);
-        // Save the current wallet UID
-        const activeWallet = this.sdkSession.getActiveWallet();
-        if (!activeWallet || !activeWallet.uid)
-          return reject(new Error('No active wallet'));
-        const newUID = activeWallet.uid.toString('hex');
-        // If we fetched a walletUID that does not match our current one,
-        // reset accounts and update the known UID
-        if (newUID != this.walletUID) {
-          this.walletUID = newUID;
+        }
+        if (!this._syncCurrentWalletUID()) {
+          return reject('No active wallet.');
         }
         return resolve();
       });
@@ -659,14 +626,14 @@ class LatticeKeyring extends EventEmitter {
 
   _fetchAddresses(n=1, i=0, recursedAddrs=[]) {
     return new Promise((resolve, reject) => {
-      if (!this.isUnlocked())
+      if (!this.isUnlocked()) {
         return reject('No connection to Lattice. Cannot fetch addresses.')
-
+      }
       this.__fetchAddresses(n, i, (err, addrs) => {
-        if (err)
+        if (err) {
           return reject(err);
-        else
-          return resolve(addrs);
+        }
+        return resolve(addrs);
       })
     })
   }
@@ -689,9 +656,13 @@ class LatticeKeyring extends EventEmitter {
       this.sdkSession.getAddresses(addrData, (err, addrs) => {
         if (err)
           return cb(err);
+        if (!this._syncCurrentWalletUID()) {
+          return cb(new Error('No active wallet.'));
+        }
         // Sanity check -- if this returned 0 addresses, handle the error
-        if (addrs.length < 1)
+        if (addrs.length < 1) {
           return cb(new Error('No addresses returned'));
+        }
         // Return the addresses we fetched *without* updating state
         if (shouldRecurse) {
           return this.__fetchAddresses(n-1, i+1, cb, recursedAddrs.concat(addrs));
@@ -706,10 +677,15 @@ class LatticeKeyring extends EventEmitter {
       if (!this.isUnlocked())
         return reject(new Error('No connection to Lattice. Cannot sign transaction.'));
       this.sdkSession.sign({ currency: 'ETH', data: txData }, (err, res) => {
-        if (err)
+        if (err) {
           return reject(err);
-        if (!res.tx)
+        }
+        if (!this._syncCurrentWalletUID()) {
+          return reject('No active wallet.');
+        }
+        if (!res.tx) {
           return reject(new Error('No transaction payload returned.'));
+        }
         // Here we catch an edge case where the requester is asking for an EIP1559
         // transaction but firmware is not updated to support it. We fallback to legacy.
         res.type = txData.type;
@@ -796,12 +772,30 @@ class LatticeKeyring extends EventEmitter {
   }
 
   _getCurrentWalletUID() {
+    return this.walletUID || null;
+  }
+
+  // The SDK has an auto-retry mechanism for all requests if a "wrong wallet"
+  // error gets thrown. In such a case, the SDK will re-connect to the device to
+  // find the new wallet UID and will then save that UID to memory and will retry
+  // the original request with that new wallet UID.
+  // Therefore, we should sync the walletUID with `this.walletUID` after each
+  // SDK request. This is a synchronous and fast operation.
+  _syncCurrentWalletUID() {
     if (!this.sdkSession) {
       return null;
-    } else if (!this.sdkSession.getActiveWallet()) {
+    }
+    const activeWallet = this.sdkSession.getActiveWallet();
+    if (!activeWallet || !activeWallet.uid) {
       return null;
     }
-    return this.sdkSession.getActiveWallet().uid.toString('hex');
+    const newUID = activeWallet.uid.toString('hex');
+    // If we fetched a walletUID that does not match our current one,
+    // reset accounts and update the known UID
+    if (newUID != this.walletUID) {
+      this.walletUID = newUID;
+    }
+    return this.walletUID;
   }
 
   // Make sure we have an SDK connection and, therefore, an active wallet UID.
