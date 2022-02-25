@@ -88,10 +88,10 @@ class LatticeKeyring extends EventEmitter {
         ));
       }
 
-      if (this.isUnlocked()) {
+      if (this.isUnlocked() && !this.forceReconnect) {
         return resolve('Unlocked');
       }
-
+      
       this._getCreds()
       .then((creds) => {
         if (creds) {
@@ -342,6 +342,13 @@ class LatticeKeyring extends EventEmitter {
   }
 
   getFirstPage() {
+    // This function gets called after the user has connected to the Lattice.
+    // Update a state variable to force opening of the Lattice manager window.
+    // If we don't do this, MetaMask will automatically start requesting addresses,
+    // even if the device is not reachable.
+    // This way the user can close the window and connect accounts from other
+    // wallets instead of being forced into selecting Lattice accounts
+    this.forceReconnect = true;
     this.page = 0;
     return this._getPage(0);
   }
@@ -492,9 +499,10 @@ class LatticeKeyring extends EventEmitter {
   _getCreds() {
     return new Promise((resolve, reject) => {
       // We only need to setup if we don't have a deviceID
-      if (this._hasCreds())
+      if (this._hasCreds() && !this.forceReconnect)
         return resolve();
-
+      // Cancel the force reconnect, as we are doing that now
+      this.forceReconnect = false;
       // If we are not aware of what Lattice we should be talking to,
       // we need to open a window that lets the user go through the
       // pairing or connection process.
