@@ -388,12 +388,8 @@ class LatticeKeyring extends EventEmitter {
           if (address.toLowerCase() === addr.toLowerCase())
             accountIdx = i;
         })
-        if (accountIdx === null)
+        if (accountIdx === null) {
           return reject('Signer not present');
-        // Make sure the account is associated with the current wallet
-        if (this.accountOpts[accountIdx].walletUID !== this._getCurrentWalletUID()) {
-          return reject(new Error('Account on a different wallet. ' +
-                                  'Please switch to the correct wallet on your Lattice.'));
         }
         return resolve(accountIdx);
       })
