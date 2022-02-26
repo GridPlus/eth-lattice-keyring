@@ -70,7 +70,7 @@ class LatticeKeyring extends EventEmitter {
   // Deterimine if we have a connection to the Lattice and an existing wallet UID
   // against which to make requests.
   isUnlocked () {
-    return !!this._getCurrentWalletUID()
+    return !!this._getCurrentWalletUID() && !!this.sdkSession;
   }
 
   // Initialize a session with the Lattice1 device using the GridPlus SDK
@@ -296,8 +296,6 @@ class LatticeKeyring extends EventEmitter {
             signerPath: this._getHDPathIndices(addressParentPath, addressIdx),
           }
         }
-        if (!this.isUnlocked())
-          return reject(new Error('No connection to Lattice. Could not send request.'));
         this.sdkSession.sign(req, (err, res) => {
           if (err) {
             return reject(new Error(err));
@@ -376,9 +374,12 @@ class LatticeKeyring extends EventEmitter {
   // Note that this is the BIP39 path index, not the index in the address cache.
   _findSignerIdx(address) {
     return new Promise((resolve, reject) => {
-      this._ensureCurrentWalletUID()
+      this.unlock()
       .then(() => {
-        return this.getAccounts()
+        return this._ensureCurrentWalletUID();
+      })
+      .then(() => {
+        return this.getAccounts();
       })
       .then((addrs) => {
         // Find the signer in our current set of accounts
@@ -678,8 +679,6 @@ class LatticeKeyring extends EventEmitter {
 
   _signTxData(txData) {
     return new Promise((resolve, reject) => {
-      if (!this.isUnlocked())
-        return reject(new Error('No connection to Lattice. Cannot sign transaction.'));
       this.sdkSession.sign({ currency: 'ETH', data: txData }, (err, res) => {
         if (err) {
           return reject(err);
