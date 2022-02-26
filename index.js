@@ -45,6 +45,8 @@ class LatticeKeyring extends EventEmitter {
       this.network = opts.network;
     if (opts.page)
       this.page = opts.page;
+    if (opts.sdkState)
+      this.sdkState = opts.sdkState;
     return Promise.resolve()
   }
 
@@ -64,6 +66,9 @@ class LatticeKeyring extends EventEmitter {
       network: this.network,
       page: this.page,
       hdPath: this.hdPath,
+      sdkState: this.sdkSession ? 
+                this.sdkSession.getStateData() :
+                null
     })
   }
 
@@ -101,7 +106,11 @@ class LatticeKeyring extends EventEmitter {
         }
         return this._initSession();
       })
-      .then(() => {
+      .then((includedStateData) => {
+        // If an state data was provided to create the SDK session, we can skip `connect`.
+        if (includedStateData) {
+          return resolve('Unlocked');
+        }
         return this._connect();
       })
       .then(() => {
@@ -619,10 +628,13 @@ class LatticeKeyring extends EventEmitter {
           crypto,
           timeout: SDK_TIMEOUT,
           privKey: this._genSessionKey(),
-          network: this.network
+          network: this.network,
+          stateData: this.sdkState,
         }
         this.sdkSession = new SDK.Client(setupData);
-        return resolve();
+        // Return a boolean indicating whether we provided state data.
+        // If we have, we can skip `connect`.
+        return resolve(!!setupData.stateData);
       } catch (err) {
         return reject(err);
       }
