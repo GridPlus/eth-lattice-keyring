@@ -79,7 +79,7 @@ class LatticeKeyring extends EventEmitter {
   }
 
   // Initialize a session with the Lattice1 device using the GridPlus SDK
-  unlock() {
+  unlock(bypassOnStateData=false) {
     return new Promise((resolve, reject) => {
       // Force compatability. `this.accountOpts` were added after other
       // state params and must be synced in order for this keyring to function.
@@ -107,8 +107,9 @@ class LatticeKeyring extends EventEmitter {
         return this._initSession();
       })
       .then((includedStateData) => {
-        // If an state data was provided to create the SDK session, we can skip `connect`.
-        if (includedStateData) {
+        // If state data was provided and if we are authorized to 
+        // bypass reconnecting, we can exit here.
+        if (includedStateData && bypassOnStateData) {
           return resolve('Unlocked');
         }
         return this._connect();
@@ -383,7 +384,12 @@ class LatticeKeyring extends EventEmitter {
   // Note that this is the BIP39 path index, not the index in the address cache.
   _findSignerIdx(address) {
     return new Promise((resolve, reject) => {
-      this.unlock()
+      // Unlock and get the wallet UID. We will bypass the reconnection
+      // step if we are able to rehydrate an SDK session with state data.
+      // This bypass is useful for signing requests since it cuts out 1-2 
+      // additional requests, but should not genrally be used as it makes
+      // error handling more difficult.
+      this.unlock(true)
       .then(() => {
         return this._ensureCurrentWalletUID();
       })
@@ -507,7 +513,7 @@ class LatticeKeyring extends EventEmitter {
       // We only need to setup if we don't have a deviceID
       if (this._hasCreds() && !this.forceReconnect)
         return resolve();
-      // Cancel the force reconnect, as we are doing that now
+      // Cancel the force reconnect, if applicable
       this.forceReconnect = false;
       // If we are not aware of what Lattice we should be talking to,
       // we need to open a window that lets the user go through the
@@ -619,6 +625,7 @@ class LatticeKeyring extends EventEmitter {
         return resolve();
       }
       try {
+        // Stup an SDK client
         let url = 'https://signing.gridpl.us';
         if (this.creds.endpoint)
           url = this.creds.endpoint
