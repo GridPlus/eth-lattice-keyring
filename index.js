@@ -79,6 +79,12 @@ class LatticeKeyring extends EventEmitter {
   }
 
   // Initialize a session with the Lattice1 device using the GridPlus SDK
+  // NOTE: `bypassOnStateData=true` allows us to rehydrate a new SDK session without
+  // reconnecting to the target Lattice. This is only currently used for signing 
+  // because it eliminates the need for 2 connection requests and shaves off ~4-6sec.
+  // We avoid passing `bypassOnStateData=true` for other calls on `unlock` to avoid
+  // possible edge cases related to this new functionality (it's probably fine - just
+  // being cautious). In the future we may remove `bypassOnStateData` entirely.
   unlock(bypassOnStateData=false) {
     return new Promise((resolve, reject) => {
       // Force compatability. `this.accountOpts` were added after other
@@ -386,9 +392,6 @@ class LatticeKeyring extends EventEmitter {
     return new Promise((resolve, reject) => {
       // Unlock and get the wallet UID. We will bypass the reconnection
       // step if we are able to rehydrate an SDK session with state data.
-      // This bypass is useful for signing requests since it cuts out 1-2 
-      // additional requests, but should not genrally be used as it makes
-      // error handling more difficult.
       this.unlock(true)
       .then(() => {
         return this._ensureCurrentWalletUID();
