@@ -628,18 +628,25 @@ class LatticeKeyring extends EventEmitter {
         return resolve();
       }
       try {
-        // Stup an SDK client
         let url = 'https://signing.gridpl.us';
         if (this.creds.endpoint)
           url = this.creds.endpoint
-        const setupData = {
-          name: this.appName,
-          baseUrl: url,
-          crypto,
-          timeout: SDK_TIMEOUT,
-          privKey: this._genSessionKey(),
-          network: this.network,
-          stateData: this.sdkState,
+        let setupData;
+        if (this.sdkState) {
+          // If we have state data we can fully rehydrate the session.
+          setupData = {
+            stateData: this.sdkState
+          }
+        } else {
+          // If we have no state data, we need to create a session.
+          // Its state will be saved once the connection is established.
+          setupData = {
+            name: this.appName,
+            baseUrl: url,
+            timeout: SDK_TIMEOUT,
+            privKey: this._genSessionKey(),
+            network: this.network,
+          }
         }
         this.sdkSession = new SDK.Client(setupData);
         // Return a boolean indicating whether we provided state data.
