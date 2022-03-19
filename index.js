@@ -609,23 +609,24 @@ class LatticeKeyring extends EventEmitter {
     let url = 'https://signing.gridpl.us';
     if (this.creds.endpoint)
       url = this.creds.endpoint
-    let setupData;
+    let setupData = {
+      name: this.appName,
+      baseUrl: url,
+      timeout: SDK_TIMEOUT,
+      privKey: this._genSessionKey(),
+      network: this.network,
+    };
+    /* 
+    NOTE: We need state to actually be synced by MetaMask or we can't
+    use this. See: https://github.com/MetaMask/KeyringController/issues/130
+
     if (this.sdkState) {
       // If we have state data we can fully rehydrate the session.
       setupData = {
         stateData: this.sdkState
       }
-    } else {
-      // If we have no state data, we need to create a session.
-      // Its state will be saved once the connection is established.
-      setupData = {
-        name: this.appName,
-        baseUrl: url,
-        timeout: SDK_TIMEOUT,
-        privKey: this._genSessionKey(),
-        network: this.network,
-      }
     }
+    */
     this.sdkSession = new SDK.Client(setupData);
     // Return a boolean indicating whether we provided state data.
     // If we have, we can skip `connect`.
