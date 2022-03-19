@@ -297,7 +297,6 @@ class LatticeKeyring extends EventEmitter {
       },
     };
     const res = await this.sdkSession.sign(req);
-    this._syncSdkState();
     if (!res.sig) {
       throw new Error("No signature returned");
     }
@@ -597,10 +596,8 @@ class LatticeKeyring extends EventEmitter {
       this.sdkSession.timeout = CONNECT_TIMEOUT;
       await this.sdkSession.connect(this.creds.deviceID)
       this.sdkSession.timeout = SDK_TIMEOUT;
-      this._syncSdkState();
     } catch (err) {
       this.sdkSession.timeout = SDK_TIMEOUT;
-      this._syncSdkState();
       throw new Error(err);
     }
   }
@@ -659,7 +656,6 @@ class LatticeKeyring extends EventEmitter {
       skipCache: true,
     };
     const addrs = await this.sdkSession.getAddresses(addrData);
-    this._syncSdkState();
     // Sanity check -- if this returned 0 addresses, handle the error
     if (addrs.length < 1) {
       throw new Error('No addresses returned');
@@ -673,7 +669,6 @@ class LatticeKeyring extends EventEmitter {
 
   async _signTxData(txData) {
     const res = await this.sdkSession.sign({ currency: 'ETH', data: txData });
-    this._syncSdkState();
     if (!res.tx) {
       throw new Error('No transaction payload returned.');
     }
@@ -760,13 +755,6 @@ class LatticeKeyring extends EventEmitter {
       return null;
     }
     return activeWallet.uid.toString('hex');
-  }
-
-  _syncSdkState() {
-    if (!this.sdkSession) {
-      return;
-    }
-    this.sdkState = this.sdkSession.getStateData();
   }
 }
 
