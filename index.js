@@ -174,6 +174,7 @@ class LatticeKeyring extends EventEmitter {
   async signTransaction (address, tx) {
     const accountIdx = await this._findSignerIdx(address);
     let txData;
+    const chainId = `0x${this._getEthereumJsChainId(tx)}`;
     try {
       // Build the Lattice request data and make request
       // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
@@ -181,7 +182,7 @@ class LatticeKeyring extends EventEmitter {
       const addressIdx = this.accountIndices[accountIdx];
       const { hdPath } = this.accountOpts[accountIdx];
       txData = {
-        chainId: `0x${this._getEthereumJsChainId(tx).toString('hex')}` || 1,
+        chainId,
         nonce: `0x${tx.nonce.toString('hex')}` || 0,
         gasLimit: `0x${tx.gasLimit.toString('hex')}`,
         to: !!tx.to ? tx.to.toString('hex') : null, // null for contract deployments
@@ -252,12 +253,11 @@ class LatticeKeyring extends EventEmitter {
 
     // Build the tx for export
     let validatingTx;
-    const _chainId = `0x${this._getEthereumJsChainId(tx).toString('hex')}`;
-    const chainId = new BN(_chainId).toNumber();
+    const bnChainId = new BN(chainId).toNumber();
     const customNetwork = Common.forCustomChain('mainnet', {
       name: 'notMainnet',
-      networkId: chainId,
-      chainId: chainId,
+      networkId: bnChainId,
+      chainId: bnChainId,
     }, 'london')
 
     return EthTx.TransactionFactory.fromTxData(txToReturn, {
@@ -737,7 +737,7 @@ class LatticeKeyring extends EventEmitter {
   // Returns a hex string without the 0x prefix
   _getEthereumJsChainId(tx) {
     if (typeof tx.getChainId === 'function')
-      return tx.getChainId();
+      return tx.getChainId().toString(16);
     else if (tx.common && typeof tx.common.chainIdBN === 'function')
       return tx.common.chainIdBN().toString(16);
     else if (typeof tx.chainId === 'number')
