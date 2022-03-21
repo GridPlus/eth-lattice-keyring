@@ -117,8 +117,7 @@ class LatticeKeyring extends EventEmitter {
     if (includedStateData && bypassOnStateData) {
       return "Unlocked";
     }
-// FIRST TRY SYNC WALLETS AND IF THAT FAILS TRY CONNECT
-    await this._connect();
+    await this._syncWallet();
     return "Unlocked";
   }
 
@@ -383,8 +382,7 @@ class LatticeKeyring extends EventEmitter {
       return accountIdx;
     }
     // If it is a different wallet, sync our SDK session and try to match
-// SWITCH TO SYNC WALLET    
-    await this._connect();
+    await this._syncWallet();
     // Check the new wallet and see if there is a match
     const newActiveWallet = this.sdkSession.getActiveWallet();
     if (!newActiveWallet) {
@@ -599,6 +597,15 @@ class LatticeKeyring extends EventEmitter {
     } catch (err) {
       this.sdkSession.timeout = SDK_TIMEOUT;
       throw new Error(err);
+    }
+  }
+
+  // Force state to sync with that of the Lattice so we know the wallet UID
+  async _syncWallet() {
+    try {
+      await this.sdkSession.fetchActiveWallet();
+    } catch (err) {
+      await this._connect();
     }
   }
 
