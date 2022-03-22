@@ -100,11 +100,9 @@ class LatticeKeyring extends EventEmitter {
         "Your accounts have been cleared. Please press Continue to add them back in."
       );
     }
-
     if (this.isUnlocked()) {
       return "Unlocked";
     }
-
     const creds = await this._getCreds();
     if (creds) {
       this.creds.deviceID = creds.deviceID;
@@ -112,13 +110,12 @@ class LatticeKeyring extends EventEmitter {
       this.creds.endpoint = creds.endpoint || null;
     }
     const includedStateData = await this._initSession();
-
     // If state data was provided and if we are authorized to
     // bypass reconnecting, we can exit here.
     if (includedStateData && bypassOnStateData) {
       return "Unlocked";
     }
-    await this._syncWallet();
+    await this._connect();
     return "Unlocked";
   }
 
@@ -383,6 +380,8 @@ class LatticeKeyring extends EventEmitter {
   // Find the account index of the requested address.
   // Note that this is the BIP39 path index, not the index in the address cache.
   async _findSignerIdx (address) {
+    // Take note if this was already unlocked
+    const wasUnlocked = this.isUnlocked();
     // Unlock and get the wallet UID. We will bypass the reconnection
     // step if we are able to rehydrate an SDK session with state data.
     await this.unlock(true);
@@ -402,19 +401,28 @@ class LatticeKeyring extends EventEmitter {
     if (walletUID.toString("hex") === activeUID) {
       return accountIdx;
     }
-    // If it is a different wallet, sync our SDK session and try to match
-    await this._syncWallet();
-    // Check the new wallet and see if there is a match
-    const newActiveWallet = this.sdkSession.getActiveWallet();
-    if (!newActiveWallet) {
-      // This should not be possible, but force reconnect and return error.
-      await this._connect();
-      throw new Error("No active wallet in Lattice.");
+    // If this was unlocked already, the `this.unlock` call did not make
+    // it forcing sync of the wallet UID, so we need to explicitly do
+    // that now. Once synced, we can be sure whether this account is in
+    // the wallet that is currently active on the device.
+    if (wasUnlocked) {
+      await this._syncWallet();
+      // Check the new wallet and see if there is a match
+      const newActiveWallet = this.sdkSession.getActiveWallet();
+      if (!newActiveWallet) {
+        // This should not be possible, but force reconnect and return error.
+        await this._connect();
+        throw new Error("No active wallet in Lattice.");
+      }
+      const newActiveUID = newActiveWallet.uid.toString("hex");
+      if (walletUID.toString("hex") === newActiveUID) {
+        return accountIdx;
+      }
     }
-    const newActiveUID = newActiveWallet.uid.toString("hex");
-    if (walletUID.toString("hex") === newActiveUID) {
-      return accountIdx;
-    }
+    // If we were NOT unlocked, the call to `this.unlock` forced wallet UID
+    // sync already, meaning the comparison against the active wallet above
+    // can be considered the source of truth. If we have made it here,
+    // we should throw an error because there is no match.
     throw new Error(
       "Account not found in active Lattice wallet. Please switch."
     );
