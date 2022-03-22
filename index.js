@@ -173,7 +173,7 @@ class LatticeKeyring extends EventEmitter {
   async signTransaction (address, tx) {
     const accountIdx = await this._findSignerIdx(address);
     let txData;
-    const chainId = `0x${this._getEthereumJsChainId(tx)}`;
+    const chainId = parseInt(this._getEthereumJsChainId(tx), 16);
     try {
       // Build the Lattice request data and make request
       // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
