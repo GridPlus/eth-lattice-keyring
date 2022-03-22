@@ -1,10 +1,11 @@
 const crypto = require('crypto');
 const EventEmitter = require('events').EventEmitter;
-const BN = require('bignumber.js');
+const BN = require('bn.js');
 const SDK = require('gridplus-sdk');
 const EthTx = require('@ethereumjs/tx');
 const Common = require('@ethereumjs/common').default;
 const Util = require('ethereumjs-util');
+const secp256k1 = require('secp256k1');
 const keyringType = 'Lattice Hardware';
 const HARDENED_OFFSET = 0x80000000;
 const PER_PAGE = 5;
@@ -171,92 +172,119 @@ class LatticeKeyring extends EventEmitter {
   }
 
   async signTransaction (address, tx) {
-    const accountIdx = await this._findSignerIdx(address);
-    let txData;
-    const chainId = parseInt(this._getEthereumJsChainId(tx), 16);
-    try {
-      // Build the Lattice request data and make request
-      // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
-      // To ensure everything plays nicely with gridplus-sdk, we convert everything to hex strings
-      const addressIdx = this.accountIndices[accountIdx];
-      const { hdPath } = this.accountOpts[accountIdx];
-      txData = {
-        chainId,
-        nonce: `0x${tx.nonce.toString('hex')}` || 0,
-        gasLimit: `0x${tx.gasLimit.toString('hex')}`,
-        to: !!tx.to ? tx.to.toString('hex') : null, // null for contract deployments
-        value: `0x${tx.value.toString('hex')}`,
-        data: tx.data.length === 0 ? null : `0x${tx.data.toString('hex')}`,
-        signerPath: this._getHDPathIndices(hdPath, addressIdx),
-      }
-      switch (tx._type) {
-        case 2: // eip1559
-          if ((tx.maxPriorityFeePerGas === null || tx.maxFeePerGas === null) ||
-              (tx.maxPriorityFeePerGas === undefined || tx.maxFeePerGas === undefined))
-            throw new Error('`maxPriorityFeePerGas` and `maxFeePerGas` must be included for EIP1559 transactions.');
-          txData.maxPriorityFeePerGas = `0x${tx.maxPriorityFeePerGas.toString('hex')}`;
-          txData.maxFeePerGas = `0x${tx.maxFeePerGas.toString('hex')}`;
-          txData.accessList = tx.accessList || [];
-          txData.type = 2;
-          break;
-        case 1: // eip2930
-          txData.accessList = tx.accessList || [];
-          txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
-          txData.type = 1;
-          break;
-        default: // legacy
-          txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
-          txData.type = null;
-          break;
-      }
-      // Lattice firmware v0.11.0 implemented EIP1559 and EIP2930 so for previous verisons
-      // we need to overwrite relevant params and revert to legacy type.
-      // Note: `this.sdkSession.fwVersion is of format [fix, minor, major, reserved]
-      const forceLegacyTx = this.sdkSession.fwVersion[2] < 1 && 
-                            this.sdkSession.fwVersion[1] < 11;
-      if (forceLegacyTx && txData.type === 2) {
-        txData.gasPrice = txData.maxFeePerGas;
-        txData.revertToLegacy = true;
-        delete txData.type;
-        delete txData.maxFeePerGas;
-        delete txData.maxPriorityFeePerGas;
-        delete txData.accessList;
-      } else if (forceLegacyTx && txData.type === 1) {
-        txData.revertToLegacy = true;
-        delete txData.type;
-        delete txData.accessList;
-      }
-    } catch (err) {
-      throw new Error(`Failed to build transaction.`)
-    }
-    // Get the signature
-    const signedTx = await this._signTxData(txData)
-    // Add the sig params. `signedTx = { sig: { v, r, s }, tx, txHash}`
-    if (!signedTx.sig || !signedTx.sig.v || !signedTx.sig.r || !signedTx.sig.s) {
-      throw new Error('No signature returned.');
-    }
+    let signedTx, v;
     const txToReturn = tx.toJSON();
-    const v = signedTx.sig.v.length === 0 ? '0' : signedTx.sig.v.toString('hex')
+    const accountIdx = await this._findSignerIdx(address);
+    const chainId = getTxChainId(tx).toNumber();
+    const fwVersion = this.sdkSession.getFwVersion();
+    // Build the Lattice request data and make request
+    // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
+    // To ensure everything plays nicely with gridplus-sdk, we convert everything to hex strings
+    const addressIdx = this.accountIndices[accountIdx];
+    const { hdPath } = this.accountOpts[accountIdx];
+    if (fwVersion.major > 0 || fwVersion.minor >= 15) {
+      // Newer firmware versions support an easier pathway
+      const data = {
+        // Legacy transactions return tx params. Newer transactions
+        // return the raw, serialized transaction
+        payload:  tx._type ?
+                  tx.getMessageToSign(false) :
+                  rlp.encode(tx.getMessageToSign(false)),
+        curveType: SDK.Constants.SIGNING.CURVES.SECP256K1,
+        hashType: SDK.Constants.SIGNING.HASHES.KECCAK256,
+        encodingType: SDK.Constants.SIGNING.ENCODINGS.EVM,
+        signerPath: this._getHDPathIndices(hdPath, addressIdx),
+      };
+      signedTx = await this.sdkSession.sign({ data });
+      v = getV(tx, signedTx);
+      txToReturn.type = tx._type || null;
+    } else {
+      let txData;
+      try {
+        txData = {
+          chainId,
+          nonce: `0x${tx.nonce.toString('hex')}` || 0,
+          gasLimit: `0x${tx.gasLimit.toString('hex')}`,
+          to: !!tx.to ? tx.to.toString('hex') : null, // null for contract deployments
+          value: `0x${tx.value.toString('hex')}`,
+          data: tx.data.length === 0 ? null : `0x${tx.data.toString('hex')}`,
+          signerPath: this._getHDPathIndices(hdPath, addressIdx),
+        }
+        switch (tx._type) {
+          case 2: // eip1559
+            if ((tx.maxPriorityFeePerGas === null || tx.maxFeePerGas === null) ||
+                (tx.maxPriorityFeePerGas === undefined || tx.maxFeePerGas === undefined))
+              throw new Error('`maxPriorityFeePerGas` and `maxFeePerGas` must be included for EIP1559 transactions.');
+            txData.maxPriorityFeePerGas = `0x${tx.maxPriorityFeePerGas.toString('hex')}`;
+            txData.maxFeePerGas = `0x${tx.maxFeePerGas.toString('hex')}`;
+            txData.accessList = tx.accessList || [];
+            txData.type = 2;
+            break;
+          case 1: // eip2930
+            txData.accessList = tx.accessList || [];
+            txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
+            txData.type = 1;
+            break;
+          default: // legacy
+            txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
+            txData.type = null;
+            break;
+        }
+        // Lattice firmware v0.11.0 implemented EIP1559 and EIP2930 so for previous verisons
+        // we need to overwrite relevant params and revert to legacy type.
+        // Note: `this.sdkSession.fwVersion is of format [fix, minor, major, reserved]
+        const forceLegacyTx = this.sdkSession.fwVersion[2] < 1 && 
+                              this.sdkSession.fwVersion[1] < 11;
+        if (forceLegacyTx && txData.type === 2) {
+          txData.gasPrice = txData.maxFeePerGas;
+          txData.revertToLegacy = true;
+          delete txData.type;
+          delete txData.maxFeePerGas;
+          delete txData.maxPriorityFeePerGas;
+          delete txData.accessList;
+        } else if (forceLegacyTx && txData.type === 1) {
+          txData.revertToLegacy = true;
+          delete txData.type;
+          delete txData.accessList;
+        }
+      } catch (err) {
+        throw new Error(`Failed to build transaction.`)
+      }
+      // Get the signature
+      signedTx = await this._signTxData(txData);
+
+      // If firmware does not support an EIP1559/2930 transaction we revert to legacy
+      if (signedTx.revertToLegacy === true) {
+        txToReturn.type = 0;
+        txToReturn.gasPrice = signedTx.gasPrice;
+      } else {
+        txToReturn.type = signedTx.type;
+      }
+
+      // Add the sig params. `signedTx = { sig: { v, r, s }, tx, txHash}`
+      if (!signedTx.sig || !signedTx.sig.r || !signedTx.sig.s) {
+        throw new Error('No signature returned.');
+      }
+      if (signedTx.sig.v === undefined) {
+        // V2 signature needs `v` calculated
+        v = getV(tx, signedTx);
+      } else {
+        // Legacy signatures have `v` in the response
+        v = signedTx.sig.v.length === 0 ? '0' : signedTx.sig.v.toString('hex')
+      }
+    }
+
+    // Pack the signature into the return object
     txToReturn.r = Util.addHexPrefix(signedTx.sig.r.toString('hex'));
     txToReturn.s = Util.addHexPrefix(signedTx.sig.s.toString('hex'));
     txToReturn.v = Util.addHexPrefix(v);
 
-    if (signedTx.revertToLegacy === true) {
-      // If firmware does not support an EIP1559/2930 transaction we revert to legacy
-      txToReturn.type = 0;
-      txToReturn.gasPrice = signedTx.gasPrice;
-    } else {
-      // Otherwise relay the tx type
-      txToReturn.type = signedTx.type;
-    }
-
     // Build the tx for export
     let validatingTx;
-    const bnChainId = new BN(chainId).toNumber();
     const customNetwork = Common.forCustomChain('mainnet', {
       name: 'notMainnet',
-      networkId: bnChainId,
-      chainId: bnChainId,
+      networkId: chainId,
+      chainId,
     }, 'london')
 
     return EthTx.TransactionFactory.fromTxData(txToReturn, {
@@ -668,9 +696,6 @@ class LatticeKeyring extends EventEmitter {
 
   async _signTxData(txData) {
     const res = await this.sdkSession.sign({ currency: 'ETH', data: txData });
-    if (!res.tx) {
-      throw new Error('No transaction payload returned.');
-    }
     // Here we catch an edge case where the requester is asking for an EIP1559
     // transaction but firmware is not updated to support it. We fallback to legacy.
     res.type = txData.type;
@@ -738,20 +763,6 @@ class LatticeKeyring extends EventEmitter {
     return false;
   }
 
-  // Get the chainId for whatever object this is.
-  // Returns a hex string without the 0x prefix
-  _getEthereumJsChainId(tx) {
-    if (typeof tx.getChainId === 'function')
-      return tx.getChainId().toString(16);
-    else if (tx.common && typeof tx.common.chainIdBN === 'function')
-      return tx.common.chainIdBN().toString(16);
-    else if (typeof tx.chainId === 'number')
-      return tx.chainId.toString(16);
-    else if (typeof tx.chainId === 'string')
-      return tx.chainId;
-    return '1';
-  }
-
   _getCurrentWalletUID() {
     if (!this.sdkSession) {
       return null;
@@ -762,6 +773,58 @@ class LatticeKeyring extends EventEmitter {
     }
     return activeWallet.uid.toString('hex');
   }
+}
+
+// Get the `v` component of the signature as well as an `initV`
+// parameter, which is what you need to use to re-create an @ethereumjs/tx
+// object. There is a lot of tech debt in @ethereumjs/tx which also
+// inherits the tech debt of ethereumjs-util.
+// *  The legacy `Transaction` type can call `_processSignature` with the regular
+//    `v` value.
+// *  Newer transaction types such as `FeeMarketEIP1559Transaction` will subtract
+//    27 from the `v` that gets passed in, so we need to add `27` to create `initV`
+function getV (tx, resp) {
+  const hash = tx.getMessageToSign(true);
+  const rs = new Uint8Array(Buffer.concat([ resp.sig.r, resp.sig.s ]))
+  const pubkey = new Uint8Array(resp.pubkey);
+  const recovery0 = secp256k1.ecdsaRecover(rs, 0, hash, false);
+  const recovery1 = secp256k1.ecdsaRecover(rs, 1, hash, false);
+  const pubkeyStr = Buffer.from(pubkey).toString('hex');
+  const recovery0Str = Buffer.from(recovery0).toString('hex');
+  const recovery1Str = Buffer.from(recovery1).toString('hex');
+  let recovery;
+  if (pubkeyStr === recovery0Str) {
+    recovery = 0;
+  } else if (pubkeyStr === recovery1Str) {
+    recovery = 1;
+  } else {
+    return null;
+  }
+  // Newer transaction types can include the recovery directly
+  if (tx._type) {
+    return recovery.toString(16)
+  }
+  // Check for EIP155 support. In practice, virtually every transaction 
+  // should have EIP155 support since that hardfork happened in 2016...
+  const chainId = getTxChainId(tx);
+  if (
+    !tx.supports(EthTx.Capability.EIP155ReplayProtection) &&
+    (!tx.common || !tx.common.gteHardfork('spuriousDragon'))
+  ) {
+    return new BN(recovery).addn(27).toString('hex');
+  }
+  // EIP155 replay protection is included in the `v` param
+  // and uses the chainId value.
+  return chainId.muln(2).addn(35).addn(recovery).toString('hex');
+}
+
+function getTxChainId (tx) {
+  if (tx && tx.common && typeof tx.common.chainIdBN === 'function') {
+    return tx.common.chainIdBN();
+  } else if (tx && tx.chainId) {
+    return new BN(tx.chainId);
+  }
+  return new BN(1);
 }
 
 LatticeKeyring.type = keyringType
