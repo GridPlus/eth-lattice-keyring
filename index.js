@@ -683,22 +683,29 @@ class LatticeKeyring extends EventEmitter {
   }
 
   async _getPage(increment=0) {
-    this.page += increment;
-    if (this.page < 0)
-      this.page = 0;
-    const start = PER_PAGE * this.page;
-    // Otherwise unlock the device and fetch more addresses
-    await this.unlock()
-    const addrs = await this._fetchAddresses(PER_PAGE, start)
-    const accounts = []
-    addrs.forEach((address, i) => {
-      accounts.push({
-        address,
-        balance: null,
-        index: start + i,
+    try {
+      this.page += increment;
+      if (this.page < 0)
+        this.page = 0;
+      const start = PER_PAGE * this.page;
+      // Otherwise unlock the device and fetch more addresses
+      await this.unlock()
+      const addrs = await this._fetchAddresses(PER_PAGE, start)
+      const accounts = []
+      addrs.forEach((address, i) => {
+        accounts.push({
+          address,
+          balance: null,
+          index: start + i,
+        })
       })
-    })
-    return accounts;
+      return accounts;
+    } catch (err) {
+      throw new Error(
+        'Failed to get accounts. If you have a SafeCard inserted, ' +
+        'please make sure it is unlocked.'
+      );
+    }
   }
 
   _hasCreds() {
