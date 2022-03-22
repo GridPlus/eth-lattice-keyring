@@ -714,10 +714,22 @@ class LatticeKeyring extends EventEmitter {
       })
       return accounts;
     } catch (err) {
-      throw new Error(
-        'Failed to get accounts. If you have a SafeCard inserted, ' +
-        'please make sure it is unlocked.'
-      );
+      // This will get hit for a few reasons. Here are two possibilities:
+      // 1. The user has a SafeCard inserted, but not unlocked
+      // 2. The user fetched a page for a different wallet, then switched
+      //    interface on the device
+      // In either event we should try to resync the wallet and if that
+      // fails throw an error
+      try {
+        await this._syncWallet();
+        const accounts = await this._getPage(0);
+        return accounts;
+      } catch (err) {
+        throw new Error(
+          'Failed to get accounts. Please forget the device and try again. ' +
+          'Make sure you do not have a locked SafeCard inserted.'
+        );
+      }
     }
   }
 
