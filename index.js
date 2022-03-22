@@ -171,6 +171,7 @@ class LatticeKeyring extends EventEmitter {
   async signTransaction (address, tx) {
     let signedTx, v;
     const txToReturn = tx.toJSON();
+    txToReturn.type = tx._type || null;
     const accountIdx = await this._findSignerIdx(address);
     const chainId = getTxChainId(tx).toNumber();
     const fwVersion = this.sdkSession.getFwVersion();
@@ -194,7 +195,6 @@ class LatticeKeyring extends EventEmitter {
       };
       signedTx = await this.sdkSession.sign({ data });
       v = getV(tx, signedTx);
-      txToReturn.type = tx._type || null;
     } else {
       let txData;
       try {
@@ -227,36 +227,16 @@ class LatticeKeyring extends EventEmitter {
             txData.type = null;
             break;
         }
-        // Lattice firmware v0.11.0 implemented EIP1559 and EIP2930 so for previous verisons
-        // we need to overwrite relevant params and revert to legacy type.
-        // Note: `this.sdkSession.fwVersion is of format [fix, minor, major, reserved]
-        const forceLegacyTx = this.sdkSession.fwVersion[2] < 1 && 
-                              this.sdkSession.fwVersion[1] < 11;
-        if (forceLegacyTx && txData.type === 2) {
-          txData.gasPrice = txData.maxFeePerGas;
-          txData.revertToLegacy = true;
-          delete txData.type;
-          delete txData.maxFeePerGas;
-          delete txData.maxPriorityFeePerGas;
-          delete txData.accessList;
-        } else if (forceLegacyTx && txData.type === 1) {
-          txData.revertToLegacy = true;
-          delete txData.type;
-          delete txData.accessList;
+        // Lattice firmware v0.11.0 implemented EIP1559 and EIP2930
+        // We should throw an error if we cannot support this.
+        if (fwVersion.major === 0 && fwVersion.minor <= 11 && txData.type) {
+          throw new Error('Please update Lattice firmware.');
         }
       } catch (err) {
         throw new Error(`Failed to build transaction.`)
       }
       // Get the signature
-      signedTx = await this._signTxData(txData);
-
-      // If firmware does not support an EIP1559/2930 transaction we revert to legacy
-      if (signedTx.revertToLegacy === true) {
-        txToReturn.type = 0;
-        txToReturn.gasPrice = signedTx.gasPrice;
-      } else {
-        txToReturn.type = signedTx.type;
-      }
+      signedTx = await this.sdkSession.sign({ currency: 'ETH', data: txData });
 
       // Add the sig params. `signedTx = { sig: { v, r, s }, tx, txHash}`
       if (!signedTx.sig || !signedTx.sig.r || !signedTx.sig.s) {
@@ -270,17 +250,12 @@ class LatticeKeyring extends EventEmitter {
         v = signedTx.sig.v.length === 0 ? '0' : signedTx.sig.v.toString('hex')
       }
     }
+
     // Pack the signature into the return object
     txToReturn.r = Util.addHexPrefix(signedTx.sig.r.toString('hex'));
     txToReturn.s = Util.addHexPrefix(signedTx.sig.s.toString('hex'));
     txToReturn.v = Util.addHexPrefix(v);
-    // Build the tx for export
-    let validatingTx;
-    const customNetwork = Common.forCustomChain('mainnet', {
-      name: 'notMainnet',
-      networkId: chainId,
-      chainId,
-    }, 'london')
+
     // Make sure the active wallet is correct to avoid returning
     // a signature from an unexpected signer.
     const foundIdx = await this._accountIdxInCurrentWallet(address);
@@ -291,8 +266,9 @@ class LatticeKeyring extends EventEmitter {
       );
     }
     return EthTx.TransactionFactory.fromTxData(txToReturn, {
-      common: customNetwork, freeze: Object.isFrozen(tx)
+      common: tx.common, freeze: Object.isFrozen(tx)
     })
+    return tx;
   }
 
   async signPersonalMessage(address, msg) {
@@ -424,10 +400,6 @@ class LatticeKeyring extends EventEmitter {
     );
   }
 
-  // Get the index of the provided address in the currently synced wallet.
-  // Returns a number if this address maps to the wallet UID that is
-  // currently synced in this keyring. Returns `null` if the wallet UID
-  // does not match.
   async _accountIdxInCurrentWallet(address) {
     // Get the wallet UID associated with the signer and make sure
     // the Lattice has that as its active wallet before continuing.
@@ -719,19 +691,6 @@ class LatticeKeyring extends EventEmitter {
       return await this.__fetchAddresses(n-1, i+1, recursedAddrs.concat(addrs));
     }
     return addrs;
-  }
-
-  async _signTxData(txData) {
-    const res = await this.sdkSession.sign({ currency: 'ETH', data: txData });
-    // Here we catch an edge case where the requester is asking for an EIP1559
-    // transaction but firmware is not updated to support it. We fallback to legacy.
-    res.type = txData.type;
-    if (txData.revertToLegacy) {
-      res.revertToLegacy = true;
-      res.gasPrice = txData.gasPrice;
-    }
-    // Return the signed tx
-    return res;
   }
 
   async _getPage(increment=0) {
