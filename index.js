@@ -640,6 +640,7 @@ class LatticeKeyring extends EventEmitter {
       timeout: SDK_TIMEOUT,
       privKey: this._genSessionKey(),
       network: this.network,
+      skipRetryOnWrongWallet: true,
     };
     /* 
     NOTE: We need state to actually be synced by MetaMask or we can't
@@ -648,7 +649,8 @@ class LatticeKeyring extends EventEmitter {
     if (this.sdkState) {
       // If we have state data we can fully rehydrate the session.
       setupData = {
-        stateData: this.sdkState
+        stateData: this.sdkState,
+        skipRetryOnWrongWallet: true,
       }
     }
     */
