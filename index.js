@@ -270,12 +270,10 @@ class LatticeKeyring extends EventEmitter {
         v = signedTx.sig.v.length === 0 ? '0' : signedTx.sig.v.toString('hex')
       }
     }
-
     // Pack the signature into the return object
     txToReturn.r = Util.addHexPrefix(signedTx.sig.r.toString('hex'));
     txToReturn.s = Util.addHexPrefix(signedTx.sig.s.toString('hex'));
     txToReturn.v = Util.addHexPrefix(v);
-
     // Build the tx for export
     let validatingTx;
     const customNetwork = Common.forCustomChain('mainnet', {
@@ -283,7 +281,15 @@ class LatticeKeyring extends EventEmitter {
       networkId: chainId,
       chainId,
     }, 'london')
-
+    // Make sure the active wallet is correct to avoid returning
+    // a signature from an unexpected signer.
+    const foundIdx = await this._accountIdxInCurrentWallet(address);
+    if (foundIdx === null) {
+      throw new Error(
+        'Wrong account. Please change your Lattice wallet or ' +
+        'switch to an account on your current active wallet.'
+      );
+    }
     return EthTx.TransactionFactory.fromTxData(txToReturn, {
       common: customNetwork, freeze: Object.isFrozen(tx)
     })
@@ -333,6 +339,15 @@ class LatticeKeyring extends EventEmitter {
       }
     } catch (err) {
       throw new Error("Invalid signature format returned.");
+    }
+    // Make sure the active wallet is correct to avoid returning
+    // a signature from an unexpected signer.
+    const foundIdx = await this._accountIdxInCurrentWallet(address);
+    if (foundIdx === null) {
+      throw new Error(
+        'Wrong account. Please change your Lattice wallet or ' +
+        'switch to an account on your current active wallet.'
+      );
     }
     // Return the sig string
     return `0x${res.sig.r}${res.sig.s}${v}`;
@@ -385,6 +400,35 @@ class LatticeKeyring extends EventEmitter {
     // Unlock and get the wallet UID. We will bypass the reconnection
     // step if we are able to rehydrate an SDK session with state data.
     await this.unlock(true);
+    let accountIdx = await this._accountIdxInCurrentWallet(address);
+    if (accountIdx !== null) {
+      return accountIdx;
+    }
+    // If this was unlocked already, the `this.unlock` call did not make
+    // it to the `syncWallet` call, so we should do one now and check
+    // if it is a match to our account's wallet UID.
+    if (wasUnlocked) {
+      await this._syncWallet();
+      // Check the new wallet and see if there is a match
+      accountIdx = await this._accountIdxInCurrentWallet(address);
+      if (accountIdx !== null) {
+        return accountIdx;
+      }
+    }
+    // If we were NOT unlocked, the call to `this.unlock` forced a `syncWallet`
+    // call already, meaning the comparison against the active wallet above
+    // can be considered the source of truth. If we have made it here,
+    // we should throw an error because there is no match.
+    throw new Error(
+      "Account not found in active Lattice wallet. Please switch."
+    );
+  }
+
+  // Get the index of the provided address in the currently synced wallet.
+  // Returns a number if this address maps to the wallet UID that is
+  // currently synced in this keyring. Returns `null` if the wallet UID
+  // does not match.
+  async _accountIdxInCurrentWallet(address) {
     // Get the wallet UID associated with the signer and make sure
     // the Lattice has that as its active wallet before continuing.
     const accountIdx = await this._findAccountByAddress(address);
@@ -392,8 +436,7 @@ class LatticeKeyring extends EventEmitter {
     // Get the last updated SDK wallet UID
     const activeWallet = this.sdkSession.getActiveWallet();
     if (!activeWallet) {
-      // This should not be possible, but force reconnect and return error.
-      await this._connect();
+      this._connect();
       throw new Error("No active wallet in Lattice.");
     }
     const activeUID = activeWallet.uid.toString("hex");
@@ -401,31 +444,7 @@ class LatticeKeyring extends EventEmitter {
     if (walletUID.toString("hex") === activeUID) {
       return accountIdx;
     }
-    // If this was unlocked already, the `this.unlock` call did not make
-    // it forcing sync of the wallet UID, so we need to explicitly do
-    // that now. Once synced, we can be sure whether this account is in
-    // the wallet that is currently active on the device.
-    if (wasUnlocked) {
-      await this._syncWallet();
-      // Check the new wallet and see if there is a match
-      const newActiveWallet = this.sdkSession.getActiveWallet();
-      if (!newActiveWallet) {
-        // This should not be possible, but force reconnect and return error.
-        await this._connect();
-        throw new Error("No active wallet in Lattice.");
-      }
-      const newActiveUID = newActiveWallet.uid.toString("hex");
-      if (walletUID.toString("hex") === newActiveUID) {
-        return accountIdx;
-      }
-    }
-    // If we were NOT unlocked, the call to `this.unlock` forced wallet UID
-    // sync already, meaning the comparison against the active wallet above
-    // can be considered the source of truth. If we have made it here,
-    // we should throw an error because there is no match.
-    throw new Error(
-      "Account not found in active Lattice wallet. Please switch."
-    );
+    return null;
   }
 
   async _findAccountByAddress(address) {
