@@ -613,9 +613,8 @@ class LatticeKeyring extends EventEmitter {
       // 2 minutes for that to happen.
       this.sdkSession.timeout = CONNECT_TIMEOUT;
       await this.sdkSession.connect(this.creds.deviceID)
-    } catch (err) {
-      throw new Error(err);
     } finally {
+      // Reset to normal timeout no matter what
       this.sdkSession.timeout = SDK_TIMEOUT;
     }
   }
