@@ -382,21 +382,17 @@ class LatticeKeyring extends EventEmitter {
     if (accountIdx !== null) {
       return accountIdx;
     }
-    // If this was unlocked already, the `this.unlock` call did not make
-    // it to the `syncWallet` call, so we should do one now and check
-    // if it is a match to our account's wallet UID.
+    // If this was unlocked already, the `this.unlock` call did not sync
+    // data with the Lattice. We should force a sync by reconnecting.
     if (wasUnlocked) {
-      await this._syncWallet();
+      await this._connect();
       // Check the new wallet and see if there is a match
       accountIdx = await this._accountIdxInCurrentWallet(address);
       if (accountIdx !== null) {
         return accountIdx;
       }
     }
-    // If we were NOT unlocked, the call to `this.unlock` forced a `syncWallet`
-    // call already, meaning the comparison against the active wallet above
-    // can be considered the source of truth. If we have made it here,
-    // we should throw an error because there is no match.
+    // If we could not find a match, exit here
     throw new Error(
       "Account not found in active Lattice wallet. Please switch."
     );
@@ -619,15 +615,6 @@ class LatticeKeyring extends EventEmitter {
     }
   }
 
-  // Force state to sync with that of the Lattice so we know the wallet UID
-  async _syncWallet() {
-    try {
-      await this.sdkSession.fetchActiveWallet();
-    } catch (err) {
-      await this._connect();
-    }
-  }
-
   async _initSession() {
     if (this.isUnlocked()) {
       return;
@@ -720,7 +707,7 @@ class LatticeKeyring extends EventEmitter {
       // In either event we should try to resync the wallet and if that
       // fails throw an error
       try {
-        await this._syncWallet();
+        await this._connect();
         const accounts = await this._getPage(0);
         return accounts;
       } catch (err) {
