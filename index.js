@@ -165,21 +165,23 @@ class LatticeKeyring extends EventEmitter {
 
   // Return the local store of addresses. This gets called when the extension unlocks.
   async getAccounts() {
-    return this.accounts ? this.accounts.slice() : [].slice();
+    return this.accounts ? [...this.accounts] : [];
   }
 
   async signTransaction (address, tx) {
     let signedTx, v;
+    // We will be adding a signature to hydration data for a new
+    // transaction object since the sig data is not mutable.
+    // Setup `txToReturn` data and start adding to it.
     const txToReturn = tx.toJSON();
     txToReturn.type = tx._type || null;
+    // Setup info related to signer account
     const accountIdx = await this._findSignerIdx(address);
     const chainId = getTxChainId(tx).toNumber();
     const fwVersion = this.sdkSession.getFwVersion();
-    // Build the Lattice request data and make request
-    // We expect `tx` to be an `ethereumjs-tx` object, meaning all fields are bufferized
-    // To ensure everything plays nicely with gridplus-sdk, we convert everything to hex strings
     const addressIdx = this.accountIndices[accountIdx];
     const { hdPath } = this.accountOpts[accountIdx];
+    // Build the signing request
     if (fwVersion.major > 0 || fwVersion.minor >= 15) {
       // Newer firmware versions support an easier pathway
       const data = {
@@ -196,6 +198,7 @@ class LatticeKeyring extends EventEmitter {
       signedTx = await this.sdkSession.sign({ data });
       v = getV(tx, signedTx);
     } else {
+      // Older firmware versions (<0.15.0) use the legacy signing pathway.
       let txData;
       try {
         txData = {
@@ -268,7 +271,6 @@ class LatticeKeyring extends EventEmitter {
     return EthTx.TransactionFactory.fromTxData(txToReturn, {
       common: tx.common, freeze: Object.isFrozen(tx)
     })
-    return tx;
   }
 
   async signPersonalMessage(address, msg) {
@@ -611,10 +613,10 @@ class LatticeKeyring extends EventEmitter {
       // 2 minutes for that to happen.
       this.sdkSession.timeout = CONNECT_TIMEOUT;
       await this.sdkSession.connect(this.creds.deviceID)
-      this.sdkSession.timeout = SDK_TIMEOUT;
     } catch (err) {
-      this.sdkSession.timeout = SDK_TIMEOUT;
       throw new Error(err);
+    } finally {
+      this.sdkSession.timeout = SDK_TIMEOUT;
     }
   }
 
@@ -664,7 +666,7 @@ class LatticeKeyring extends EventEmitter {
     if (!this.isUnlocked()) {
       throw new Error('No connection to Lattice. Cannot fetch addresses.')
     }
-    return await this.__fetchAddresses(n, i);
+    return this.__fetchAddresses(n, i);
   }
 
   async __fetchAddresses(n=1, i=0, recursedAddrs=[]) {
@@ -678,10 +680,9 @@ class LatticeKeyring extends EventEmitter {
 
     // Make the request to get the requested address
     const addrData = { 
-      currency: 'ETH', 
+      currency: 'ETH',
       startPath: this._getHDPathIndices(this.hdPath, i), 
       n: shouldRecurse ? 1 : n,
-      skipCache: true,
     };
     const addrs = await this.sdkSession.getAddresses(addrData);
     // Sanity check -- if this returned 0 addresses, handle the error
@@ -704,14 +705,13 @@ class LatticeKeyring extends EventEmitter {
       // Otherwise unlock the device and fetch more addresses
       await this.unlock()
       const addrs = await this._fetchAddresses(PER_PAGE, start)
-      const accounts = []
-      addrs.forEach((address, i) => {
-        accounts.push({
+      const accounts = addrs.map((address, i) => {
+        return {
           address,
           balance: null,
           index: start + i,
-        })
-      })
+        };
+      });
       return accounts;
     } catch (err) {
       // This will get hit for a few reasons. Here are two possibilities:
@@ -775,14 +775,21 @@ class LatticeKeyring extends EventEmitter {
   }
 }
 
-// Get the `v` component of the signature as well as an `initV`
-// parameter, which is what you need to use to re-create an @ethereumjs/tx
-// object. There is a lot of tech debt in @ethereumjs/tx which also
-// inherits the tech debt of ethereumjs-util.
-// *  The legacy `Transaction` type can call `_processSignature` with the regular
-//    `v` value.
-// *  Newer transaction types such as `FeeMarketEIP1559Transaction` will subtract
-//    27 from the `v` that gets passed in, so we need to add `27` to create `initV`
+// Get the `v` component of the signature. This is calculating using
+// secp256k1's ecdsa recover. The format of `v` returned depends
+// on the type of transaction (restrictions come from the
+// @ethereumjs/tx object).
+// * Type 1 and 2 transactions both only require a [0,1] `v` value
+//    because EIP155 is no longer needed for those protocols (since
+//    chainId is a parameter in the request).
+//    See: https://github.com/ethereumjs/ethereumjs-monorepo/
+//          blob/7330c4ace495903748c606a47a8b993812504db8/packages/
+//          tx/src/eip1559Transaction.ts#L226
+// * Type 0 transactions (legacy) require conversion to EIP155-style `v`
+//    See: https://github.com/ethereumjs/ethereumjs-monorepo/
+//          blob/v4.0.0/packages/tx/src/legacyTransaction.ts#L133
+// * If the chain does not support EIP155, we simply add 27 to recovery.
+//    In practice I don't think we will ever see this type of tx.
 function getV (tx, resp) {
   const hash = tx.getMessageToSign(true);
   const rs = new Uint8Array(Buffer.concat([ resp.sig.r, resp.sig.s ]))
