@@ -181,6 +181,12 @@ class LatticeKeyring extends EventEmitter {
     const fwVersion = this.sdkSession.getFwVersion();
     const addressIdx = this.accountIndices[accountIdx];
     const { hdPath } = this.accountOpts[accountIdx];
+    const signerPath = this._getHDPathIndices(hdPath, addressIdx);
+    // Lattice firmware v0.11.0 implemented EIP1559 and EIP2930
+    // We should throw an error if we cannot support this.
+    if (fwVersion.major === 0 && fwVersion.minor <= 11 && txData.type) {
+      throw new Error('Please update Lattice firmware.');
+    }
     // Build the signing request
     if (fwVersion.major > 0 || fwVersion.minor >= 15) {
       // Newer firmware versions support an easier pathway
@@ -193,65 +199,30 @@ class LatticeKeyring extends EventEmitter {
         curveType: SDK.Constants.SIGNING.CURVES.SECP256K1,
         hashType: SDK.Constants.SIGNING.HASHES.KECCAK256,
         encodingType: SDK.Constants.SIGNING.ENCODINGS.EVM,
-        signerPath: this._getHDPathIndices(hdPath, addressIdx),
+        signerPath,
       };
+      // Check if we can decode the calldata
+      data.decoder = await getCalldataDecoder(tx);
+      // Send the request
       signedTx = await this.sdkSession.sign({ data });
-      v = getV(tx, signedTx);
     } else {
       // Older firmware versions (<0.15.0) use the legacy signing pathway.
-      let txData;
-      try {
-        txData = {
-          chainId,
-          nonce: `0x${tx.nonce.toString('hex')}` || 0,
-          gasLimit: `0x${tx.gasLimit.toString('hex')}`,
-          to: !!tx.to ? tx.to.toString('hex') : null, // null for contract deployments
-          value: `0x${tx.value.toString('hex')}`,
-          data: tx.data.length === 0 ? null : `0x${tx.data.toString('hex')}`,
-          signerPath: this._getHDPathIndices(hdPath, addressIdx),
-        }
-        switch (tx._type) {
-          case 2: // eip1559
-            if ((tx.maxPriorityFeePerGas === null || tx.maxFeePerGas === null) ||
-                (tx.maxPriorityFeePerGas === undefined || tx.maxFeePerGas === undefined))
-              throw new Error('`maxPriorityFeePerGas` and `maxFeePerGas` must be included for EIP1559 transactions.');
-            txData.maxPriorityFeePerGas = `0x${tx.maxPriorityFeePerGas.toString('hex')}`;
-            txData.maxFeePerGas = `0x${tx.maxFeePerGas.toString('hex')}`;
-            txData.accessList = tx.accessList || [];
-            txData.type = 2;
-            break;
-          case 1: // eip2930
-            txData.accessList = tx.accessList || [];
-            txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
-            txData.type = 1;
-            break;
-          default: // legacy
-            txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
-            txData.type = null;
-            break;
-        }
-        // Lattice firmware v0.11.0 implemented EIP1559 and EIP2930
-        // We should throw an error if we cannot support this.
-        if (fwVersion.major === 0 && fwVersion.minor <= 11 && txData.type) {
-          throw new Error('Please update Lattice firmware.');
-        }
-      } catch (err) {
-        throw new Error(`Failed to build transaction.`)
-      }
-      // Get the signature
-      signedTx = await this.sdkSession.sign({ currency: 'ETH', data: txData });
-
-      // Add the sig params. `signedTx = { sig: { v, r, s }, tx, txHash}`
-      if (!signedTx.sig || !signedTx.sig.r || !signedTx.sig.s) {
-        throw new Error('No signature returned.');
-      }
-      if (signedTx.sig.v === undefined) {
-        // V2 signature needs `v` calculated
-        v = getV(tx, signedTx);
-      } else {
-        // Legacy signatures have `v` in the response
-        v = signedTx.sig.v.length === 0 ? '0' : signedTx.sig.v.toString('hex')
-      }
+      const data = getLegacyTxReq(tx);
+      data.chainId = chainId;
+      data.signerPath = signerPath;
+      signedTx = await this.sdkSession.sign({ currency: 'ETH', data });
+    }
+    // Ensure we got a signature back
+    if (!signedTx.sig || !signedTx.sig.r || !signedTx.sig.s) {
+      throw new Error('No signature returned.');
+    }
+    // Construct the `v` signature param
+    if (signedTx.sig.v === undefined) {
+      // V2 signature needs `v` calculated
+      v = getV(tx, signedTx);
+    } else {
+      // Legacy signatures have `v` in the response
+      v = signedTx.sig.v.length === 0 ? '0' : signedTx.sig.v.toString('hex')
     }
 
     // Pack the signature into the return object
@@ -761,6 +732,10 @@ class LatticeKeyring extends EventEmitter {
   }
 }
 
+// -----
+// HELPERS
+// -----
+
 // Get the `v` component of the signature. This is calculating using
 // secp256k1's ecdsa recover. The format of `v` returned depends
 // on the type of transaction (restrictions come from the
@@ -818,6 +793,92 @@ function getTxChainId (tx) {
     return new BN(tx.chainId);
   }
   return new BN(1);
+}
+
+// We should include calldata decoder information in new requests so that
+// ABI data can be decoded in place (i.e. without loading the definitions
+// ahead of time).
+async function getCalldataDecoder (tx) {
+  // If there is no data, we can't decode it, obviously
+  if (!tx.data || !tx.data.length || tx.data.length < 4) {
+    return null;
+  }
+  let def, resp;
+  const selector = Buffer.from(tx.data.slice(0, 4)).toString('hex');
+  // Get the Solidity JSON ABI definitions from Etherscan, if available
+  try {
+    resp = await httpRequest(
+      `https://api.etherscan.io/api?module=contract&action=getabi&address=${tx.to}`
+    );
+    const abi = JSON.parse(JSON.parse(resp).result);
+    def = SDK.Calldata.EVM.parsers.parseSolidityJSONABI(selector, abi);
+    return def;
+  } catch (err) {
+    console.warn('Failed to fetch ABI data from etherscan', err.message);
+  }
+  // Fallback to checking 4byte
+  try {
+    resp = await httpRequest(
+      `https://www.4byte.directory/api/v1/signatures?hex_signature=0x${selector}`
+    );
+    const fourByteResults = JSON.parse(resp).results;
+    if (fourByteResults.length > 0) {
+      console.warn('WARNING: There are multiple results. Using the first one.');
+    }
+    const canonicalName = fourByteResults[0].text_signature;
+    def = SDK.Calldata.EVM.parsers.parseCanonicalName(selector, canonicalName);
+    return def;
+  } catch (err) {
+    console.warn('Failed to fetch data from 4byte', err.message);
+  }
+  return null;
+}
+
+// Legacy versions of Lattice firmware signed ETH transactions out of
+// a now deprecated pathway. The request data is built by this helper.
+function getLegacyTxReq (tx) {
+  let txData;
+  try {
+    txData = {
+      nonce: `0x${tx.nonce.toString('hex')}` || 0,
+      gasLimit: `0x${tx.gasLimit.toString('hex')}`,
+      to: !!tx.to ? tx.to.toString('hex') : null, // null for contract deployments
+      value: `0x${tx.value.toString('hex')}`,
+      data: tx.data.length === 0 ? null : `0x${tx.data.toString('hex')}`,
+    }
+    switch (tx._type) {
+      case 2: // eip1559
+        if ((tx.maxPriorityFeePerGas === null || tx.maxFeePerGas === null) ||
+            (tx.maxPriorityFeePerGas === undefined || tx.maxFeePerGas === undefined))
+          throw new Error('`maxPriorityFeePerGas` and `maxFeePerGas` must be included for EIP1559 transactions.');
+        txData.maxPriorityFeePerGas = `0x${tx.maxPriorityFeePerGas.toString('hex')}`;
+        txData.maxFeePerGas = `0x${tx.maxFeePerGas.toString('hex')}`;
+        txData.accessList = tx.accessList || [];
+        txData.type = 2;
+        break;
+      case 1: // eip2930
+        txData.accessList = tx.accessList || [];
+        txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
+        txData.type = 1;
+        break;
+      default: // legacy
+        txData.gasPrice = `0x${tx.gasPrice.toString('hex')}`;
+        txData.type = null;
+        break;
+    }
+  } catch (err) {
+    throw new Error(`Failed to build transaction.`)
+  }
+  return txData;
+}
+
+async function httpRequest (url) {
+  const resp = await window.fetch(url);
+  if (resp.ok) {
+    return await resp.text();
+  } else {
+    throw new Error('Failed to make request: ', resp.status);
+  }
 }
 
 LatticeKeyring.type = keyringType
