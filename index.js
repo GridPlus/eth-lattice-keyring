@@ -6,6 +6,7 @@ const EthTx = require('@ethereumjs/tx');
 const Common = require('@ethereumjs/common').default;
 const Util = require('ethereumjs-util');
 const secp256k1 = require('secp256k1');
+const { rlp } = require('ethereumjs-util');
 const keyringType = 'Lattice Hardware';
 const HARDENED_OFFSET = 0x80000000;
 const PER_PAGE = 5;
@@ -474,13 +475,8 @@ class LatticeKeyring extends EventEmitter {
   }
 
   async _findTabById(id) {
-    const tabs = browser.tabs.query({});
-    tabs.forEach((tab) => {
-      if (tab.id === id) {
-        return tab;
-      }
-    })
-    return null;
+    const tabs = await browser.tabs.query({});
+    return tabs.find((tab) => tab.id === id);
   }
   
   _getCreds() {
