@@ -220,7 +220,7 @@ class LatticeKeyring extends EventEmitter {
     // Construct the `v` signature param
     if (signedTx.sig.v === undefined) {
       // V2 signature needs `v` calculated
-      v = getV(tx, signedTx);
+      v = SDK.Utils.getV(tx, signedTx);
     } else {
       // Legacy signatures have `v` in the response
       v = signedTx.sig.v.length === 0 ? '0' : signedTx.sig.v.toString('hex')
@@ -731,57 +731,6 @@ class LatticeKeyring extends EventEmitter {
 // -----
 // HELPERS
 // -----
-
-// Get the `v` component of the signature. This is calculating using
-// secp256k1's ecdsa recover. The format of `v` returned depends
-// on the type of transaction (restrictions come from the
-// @ethereumjs/tx object).
-// * Type 1 and 2 transactions both only require a [0,1] `v` value
-//    because EIP155 is no longer needed for those protocols (since
-//    chainId is a parameter in the request).
-//    See: https://github.com/ethereumjs/ethereumjs-monorepo/
-//          blob/7330c4ace495903748c606a47a8b993812504db8/packages/
-//          tx/src/eip1559Transaction.ts#L226
-// * Type 0 transactions (legacy) require conversion to EIP155-style `v`
-//    See: https://github.com/ethereumjs/ethereumjs-monorepo/
-//          blob/v4.0.0/packages/tx/src/legacyTransaction.ts#L133
-// * If the chain does not support EIP155, we simply add 27 to recovery.
-//    In practice I don't think we will ever see this type of tx.
-function getV (tx, resp) {
-  const hash = tx.getMessageToSign(true);
-  const rs = new Uint8Array(Buffer.concat([ resp.sig.r, resp.sig.s ]))
-  const pubkey = new Uint8Array(resp.pubkey);
-  const recovery0 = secp256k1.ecdsaRecover(rs, 0, hash, false);
-  const recovery1 = secp256k1.ecdsaRecover(rs, 1, hash, false);
-  const pubkeyStr = Buffer.from(pubkey).toString('hex');
-  const recovery0Str = Buffer.from(recovery0).toString('hex');
-  const recovery1Str = Buffer.from(recovery1).toString('hex');
-  let recovery;
-  if (pubkeyStr === recovery0Str) {
-    recovery = 0;
-  } else if (pubkeyStr === recovery1Str) {
-    recovery = 1;
-  } else {
-    return null;
-  }
-  // Newer transaction types can include the recovery directly
-  if (tx._type) {
-    return recovery.toString(16)
-  }
-  // Check for EIP155 support. In practice, virtually every transaction 
-  // should have EIP155 support since that hardfork happened in 2016...
-  const chainId = getTxChainId(tx);
-  if (
-    !tx.supports(EthTx.Capability.EIP155ReplayProtection) &&
-    (!tx.common || !tx.common.gteHardfork('spuriousDragon'))
-  ) {
-    return new BN(recovery).addn(27).toString('hex');
-  }
-  // EIP155 replay protection is included in the `v` param
-  // and uses the chainId value.
-  return chainId.muln(2).addn(35).addn(recovery).toString('hex');
-}
-
 function getTxChainId (tx) {
   if (tx && tx.common && typeof tx.common.chainIdBN === 'function') {
     return tx.common.chainIdBN();
