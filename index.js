@@ -203,7 +203,7 @@ class LatticeKeyring extends EventEmitter {
         signerPath,
       };
       // Check if we can decode the calldata
-      data.decoder = await getCalldataDecoder(tx);
+      data.decoder = await SDK.Utils.fetchCalldataDecoder(tx.data, tx.to, chainId);
       // Send the request
       signedTx = await this.sdkSession.sign({ data });
     } else {
