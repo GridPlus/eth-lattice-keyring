@@ -203,7 +203,7 @@ class LatticeKeyring extends EventEmitter {
         signerPath,
       };
       // Check if we can decode the calldata
-      data.decoder = await getCalldataDecoder(tx);
+      data.decoder = await SDK.Utils.fetchCalldataDecoder(tx.data, tx.to, chainId);
       // Send the request
       signedTx = await this.sdkSession.sign({ data });
     } else {
@@ -738,45 +738,6 @@ function getTxChainId (tx) {
     return new BN(tx.chainId);
   }
   return new BN(1);
-}
-
-// We should include calldata decoder information in new requests so that
-// ABI data can be decoded in place (i.e. without loading the definitions
-// ahead of time).
-async function getCalldataDecoder (tx) {
-  // If there is no data, we can't decode it, obviously
-  if (!tx.data || !tx.data.length || tx.data.length < 4) {
-    return null;
-  }
-  let def, resp;
-  const selector = Buffer.from(tx.data.slice(0, 4)).toString('hex');
-  // Get the Solidity JSON ABI definitions from Etherscan, if available
-  try {
-    resp = await httpRequest(
-      `https://api.etherscan.io/api?module=contract&action=getabi&address=${tx.to}`
-    );
-    const abi = JSON.parse(JSON.parse(resp).result);
-    def = SDK.Calldata.EVM.parsers.parseSolidityJSONABI(selector, abi);
-    return def;
-  } catch (err) {
-    console.warn('Failed to fetch ABI data from etherscan', err.message);
-  }
-  // Fallback to checking 4byte
-  try {
-    resp = await httpRequest(
-      `https://www.4byte.directory/api/v1/signatures?hex_signature=0x${selector}`
-    );
-    const fourByteResults = JSON.parse(resp).results;
-    if (fourByteResults.length > 0) {
-      console.warn('WARNING: There are multiple results. Using the first one.');
-    }
-    const canonicalName = fourByteResults[0].text_signature;
-    def = SDK.Calldata.EVM.parsers.parseCanonicalName(selector, canonicalName);
-    return def;
-  } catch (err) {
-    console.warn('Failed to fetch data from 4byte', err.message);
-  }
-  return null;
 }
 
 // Legacy versions of Lattice firmware signed ETH transactions out of
