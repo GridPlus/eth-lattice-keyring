@@ -68,7 +68,7 @@ class LatticeKeyring extends EventEmitter {
       network: this.network,
       page: this.page,
       hdPath: this.hdPath,
-      sdkState: this.sdkSession ? 
+      sdkState: this.sdkSession ?
                 this.sdkSession.getStateData() :
                 null
     };
@@ -82,7 +82,7 @@ class LatticeKeyring extends EventEmitter {
 
   // Initialize a session with the Lattice1 device using the GridPlus SDK
   // NOTE: `bypassOnStateData=true` allows us to rehydrate a new SDK session without
-  // reconnecting to the target Lattice. This is only currently used for signing 
+  // reconnecting to the target Lattice. This is only currently used for signing
   // because it eliminates the need for 2 connection requests and shaves off ~4-6sec.
   // We avoid passing `bypassOnStateData=true` for other calls on `unlock` to avoid
   // possible edge cases related to this new functionality (it's probably fine - just
@@ -123,7 +123,7 @@ class LatticeKeyring extends EventEmitter {
   // Add addresses to the local store and return the full result
   async addAccounts(n=1) {
     if (n === CLOSE_CODE) {
-      // Special case: use a code to forget the device. 
+      // Special case: use a code to forget the device.
       // (This function is overloaded due to constraints upstream)
       this.forgetDevice();
       return [];
@@ -147,7 +147,7 @@ class LatticeKeyring extends EventEmitter {
     addrs.forEach((addr, i) => {
       let alreadySaved = false;
       for (let j = 0; j < this.accounts.length; j++) {
-        if ((this.accounts[j] === addr) && 
+        if ((this.accounts[j] === addr) &&
             (this.accountOpts[j].walletUID === walletUID) &&
             (this.accountOpts[j].hdPath === this.hdPath))
           alreadySaved = true;
@@ -464,8 +464,8 @@ class LatticeKeyring extends EventEmitter {
         return { chromium: browserTab };
       } else if (browser && browser.tabs && browser.tabs.create) {
         // FireFox extensions do not run in windows, so it will return `null` from
-        // `window.open`. Instead, we need to use the `browser` API to open a tab. 
-        // We will surveille this tab to see if its URL parameters change, which 
+        // `window.open`. Instead, we need to use the `browser` API to open a tab.
+        // We will surveille this tab to see if its URL parameters change, which
         // will indicate that the user has logged in.
         const tab = await browser.tabs.create({url})
         return { firefox: tab };
@@ -481,7 +481,7 @@ class LatticeKeyring extends EventEmitter {
     const tabs = await browser.tabs.query({});
     return tabs.find((tab) => tab.id === id);
   }
-  
+
   _getCreds() {
     return new Promise((resolve, reject) => {
       // We only need to setup if we don't have a deviceID
@@ -542,13 +542,13 @@ class LatticeKeyring extends EventEmitter {
               }
               // If the tab we opened contains a new URL param
               const paramLoc = tab.url.indexOf(loginUrlParam);
-              if (paramLoc < 0) 
+              if (paramLoc < 0)
                 return;
               const dataLoc = paramLoc + loginUrlParam.length;
               // Stop this interval
               clearInterval(listenInterval);
               try {
-                // Parse the login data. It is a stringified JSON object 
+                // Parse the login data. It is a stringified JSON object
                 // encoded as a base64 string.
                 const _creds = Buffer.from(tab.url.slice(dataLoc), 'base64').toString();
                 // Close the tab and return the credentials
@@ -578,7 +578,7 @@ class LatticeKeyring extends EventEmitter {
       // the device is unplugged it will time out and we don't need to wait
       // 2 minutes for that to happen.
       this.sdkSession.timeout = CONNECT_TIMEOUT;
-      await this.sdkSession.connect(this.creds.deviceID)
+      return this.sdkSession.connect(this.creds.deviceID)
     } finally {
       // Reset to normal timeout no matter what
       this.sdkSession.timeout = SDK_TIMEOUT;
@@ -600,7 +600,7 @@ class LatticeKeyring extends EventEmitter {
       network: this.network,
       skipRetryOnWrongWallet: true,
     };
-    /* 
+    /*
     NOTE: We need state to actually be synced by MetaMask or we can't
     use this. See: https://github.com/MetaMask/KeyringController/issues/130
 
@@ -635,9 +635,9 @@ class LatticeKeyring extends EventEmitter {
     const shouldRecurse = this._hdPathHasInternalVarIdx();
 
     // Make the request to get the requested address
-    const addrData = { 
+    const addrData = {
       currency: 'ETH',
-      startPath: this._getHDPathIndices(this.hdPath, i), 
+      startPath: this._getHDPathIndices(this.hdPath, i),
       n: shouldRecurse ? 1 : n,
     };
     const addrs = await this.sdkSession.getAddresses(addrData);
@@ -677,7 +677,10 @@ class LatticeKeyring extends EventEmitter {
       // In either event we should try to resync the wallet and if that
       // fails throw an error
       try {
-        await this._connect();
+        const isPaired = await this._connect();
+        if (!isPaired) {
+          throw new Error('NOT_PAIRED');
+        }
         const accounts = await this._getPage(0);
         return accounts;
       } catch (err) {
@@ -702,8 +705,8 @@ class LatticeKeyring extends EventEmitter {
     if (!this._hasCreds())
       throw new Error('No credentials -- cannot create session key!');
     const buf = Buffer.concat([
-      Buffer.from(this.creds.password), 
-      Buffer.from(this.creds.deviceID), 
+      Buffer.from(this.creds.password),
+      Buffer.from(this.creds.deviceID),
       Buffer.from(this.appName)
     ])
     return crypto.createHash('sha256').update(buf).digest();
