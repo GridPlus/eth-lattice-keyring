@@ -681,6 +681,9 @@ class LatticeKeyring extends EventEmitter {
         const accounts = await this._getPage(0);
         return accounts;
       } catch (err) {
+        if (this.accounts.length === 0){
+          this.forgetDevice();
+        }
         throw new Error(
           'Failed to get accounts. Please forget the device and try again. ' +
           'Make sure you do not have a locked SafeCard inserted.'
