@@ -88,19 +88,6 @@ class LatticeKeyring extends EventEmitter {
   // possible edge cases related to this new functionality (it's probably fine - just
   // being cautious). In the future we may remove `bypassOnStateData` entirely.
   async unlock (bypassOnStateData = false) {
-    // Force compatability. `this.accountOpts` were added after other
-    // state params and must be synced in order for this keyring to function.
-    if (
-      !this.accountOpts ||
-      (this.accounts.length > 0 &&
-        this.accountOpts.length != this.accounts.length)
-    ) {
-      this.forgetDevice();
-      throw new Error(
-        "You can now add multiple Lattice and SafeCard accounts at the same time! " +
-        "Your accounts have been cleared. Please press Continue to add them back in."
-      );
-    }
     if (this.isUnlocked()) {
       return "Unlocked";
     }
@@ -122,12 +109,7 @@ class LatticeKeyring extends EventEmitter {
 
   // Add addresses to the local store and return the full result
   async addAccounts(n=1) {
-    if (n === CLOSE_CODE) {
-      // Special case: use a code to forget the device.
-      // (This function is overloaded due to constraints upstream)
-      this.forgetDevice();
-      return [];
-    } else if (n <= 0) {
+    if (n <= 0) {
       // Avoid non-positive numbers.
       throw new Error(
         'Number of accounts to add must be a positive number.'
