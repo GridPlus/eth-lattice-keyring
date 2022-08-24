@@ -184,8 +184,9 @@ class LatticeKeyring extends EventEmitter {
         encodingType: SDK.Constants.SIGNING.ENCODINGS.EVM,
         signerPath,
       };
+      const supportsDecoderRecursion = fwVersion.major > 0 || fwVersion.minor >=16;
       // Check if we can decode the calldata
-      const { def } = await SDK.Utils.fetchCalldataDecoder(tx.data, tx.to, chainId);
+      const { def } = await SDK.Utils.fetchCalldataDecoder(tx.data, tx.to, chainId, supportsDecoderRecursion);
       if (def) {
         data.decoder = def;
       }
