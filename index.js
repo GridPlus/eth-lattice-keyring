@@ -4,7 +4,7 @@ const BN = require('bn.js');
 const SDK = require('gridplus-sdk');
 const EthTx = require('@ethereumjs/tx');
 const Common = require('@ethereumjs/common').default;
-const Util = require('ethereumjs-util');
+const { addHexPrefix } = require("@ethereumjs/util");
 const secp256k1 = require('secp256k1');
 const rlp = require('rlp');
 const keyringType = 'Lattice Hardware';
@@ -213,9 +213,9 @@ class LatticeKeyring extends EventEmitter {
     }
 
     // Pack the signature into the return object
-    txToReturn.r = Util.addHexPrefix(signedTx.sig.r.toString('hex'));
-    txToReturn.s = Util.addHexPrefix(signedTx.sig.s.toString('hex'));
-    txToReturn.v = Util.addHexPrefix(v);
+    txToReturn.r = addHexPrefix(signedTx.sig.r.toString('hex'));
+    txToReturn.s = addHexPrefix(signedTx.sig.s.toString('hex'));
+    txToReturn.v = addHexPrefix(v);
 
     // Make sure the active wallet is correct to avoid returning
     // a signature from an unexpected signer.
