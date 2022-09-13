@@ -3,10 +3,14 @@ const EventEmitter = require('events').EventEmitter;
 const BN = require('bn.js');
 const SDK = require('gridplus-sdk');
 const EthTx = require('@ethereumjs/tx');
-const Common = require('@ethereumjs/common').default;
 const { addHexPrefix } = require("@ethereumjs/util");
-const secp256k1 = require('secp256k1');
 const rlp = require('rlp');
+const {
+  serializeCache,
+  deserializeCache,
+  getCachedDef,
+  saveDefToCache,
+} = require("./cache");
 const keyringType = 'Lattice Hardware';
 const HARDENED_OFFSET = 0x80000000;
 const PER_PAGE = 5;
@@ -18,6 +22,7 @@ const CONNECT_TIMEOUT = 20000;
 class LatticeKeyring extends EventEmitter {
   constructor (opts={}) {
     super()
+    this.requestCache = new Map();
     this.type = keyringType;
     this._resetDefaults();
     this.deserialize(opts);
@@ -47,8 +52,8 @@ class LatticeKeyring extends EventEmitter {
       this.network = opts.network;
     if (opts.page)
       this.page = opts.page;
-    if (opts.sdkState)
-      this.sdkState = opts.sdkState;
+    if (opts.requestCache) 
+      this.requestCache = deserializeCache(opts.requestCache)
     return;
   }
 
@@ -68,9 +73,7 @@ class LatticeKeyring extends EventEmitter {
       network: this.network,
       page: this.page,
       hdPath: this.hdPath,
-      sdkState: this.sdkSession ?
-                this.sdkSession.getStateData() :
-                null
+      requestCache: serializeCache(this.requestCache),
     };
   }
 
@@ -184,9 +187,18 @@ class LatticeKeyring extends EventEmitter {
         encodingType: SDK.Constants.SIGNING.ENCODINGS.EVM,
         signerPath,
       };
-      const supportsDecoderRecursion = fwVersion.major > 0 || fwVersion.minor >=16;
-      // Check if we can decode the calldata
-      const { def } = await SDK.Utils.fetchCalldataDecoder(tx.data, tx.to, chainId, supportsDecoderRecursion);
+      let def;
+      const cachedDef = getCachedDef(tx, this.requestCache)
+
+      if (cachedDef) {
+        def = cachedDef
+      } else {
+        const supportsDecoderRecursion = fwVersion.major > 0 || fwVersion.minor >=16;
+        // Check if we can decode the calldata
+        const { def: fetchedDef } = await SDK.Utils.fetchCalldataDecoder(tx.data, tx.to, chainId, supportsDecoderRecursion);
+        saveDefToCache(tx, this.requestCache, fetchedDef);
+        def = fetchedDef
+      }
       if (def) {
         data.decoder = def;
       }
@@ -436,6 +448,7 @@ class LatticeKeyring extends EventEmitter {
     this.unlockedAccount = 0;
     this.network = null;
     this.hdPath = STANDARD_HD_PATH;
+    this.requestCache = new Map()
   }
 
   async _openConnectorTab(url) {
@@ -718,6 +731,7 @@ class LatticeKeyring extends EventEmitter {
     }
     return activeWallet.uid.toString('hex');
   }
+
 }
 
 // -----
