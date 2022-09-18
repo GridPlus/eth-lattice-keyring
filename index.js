@@ -170,7 +170,7 @@ class LatticeKeyring extends EventEmitter {
     const signerPath = this._getHDPathIndices(hdPath, addressIdx);
     // Lattice firmware v0.11.0 implemented EIP1559 and EIP2930
     // We should throw an error if we cannot support this.
-    if (fwVersion.major === 0 && fwVersion.minor <= 11 && txData.type) {
+    if (fwVersion.major === 0 && fwVersion.minor <= 11) {
       throw new Error('Please update Lattice firmware.');
     }
     // Build the signing request
