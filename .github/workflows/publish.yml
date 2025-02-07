@@ -9,6 +9,9 @@ jobs:
   publish-npm:
     name: Publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: github.actor == github.repository_owner
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
