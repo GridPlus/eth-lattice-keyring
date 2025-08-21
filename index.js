@@ -136,7 +136,7 @@ class LatticeKeyring extends EventEmitter {
         })
       }
     })
-    return [this.accounts[this.accounts.length - 1]];
+    return this.accounts.slice(-n);
   }
 
   // Return the local store of addresses. This gets called when the extension unlocks.
