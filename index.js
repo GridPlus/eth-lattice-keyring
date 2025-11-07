@@ -100,7 +100,7 @@ class LatticeKeyring extends EventEmitter {
     return "Unlocked";
   }
 
-  // Add addresses to the local store and return the full result
+  // Add addresses to the local store and return only the addresses that were actually added
   async addAccounts(n=1) {
     if (n <= 0) {
       // Avoid non-positive numbers.
@@ -119,6 +119,7 @@ class LatticeKeyring extends EventEmitter {
       throw new Error('No active wallet found in Lattice. Please retry.');
     }
     // Add these indices
+    const newlyAdded = [];
     addrs.forEach((addr, i) => {
       let alreadySaved = false;
       for (let j = 0; j < this.accounts.length; j++) {
@@ -133,10 +134,11 @@ class LatticeKeyring extends EventEmitter {
         this.accountOpts.push({
           walletUID,
           hdPath: this.hdPath,
-        })
+        });
+        newlyAdded.push(addr); // Track what was actually added
       }
-    })
-    return [this.accounts[this.accounts.length - 1]];
+    });
+    return newlyAdded; // Return only the addresses that were actually added
   }
 
   // Return the local store of addresses. This gets called when the extension unlocks.
