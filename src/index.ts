@@ -1,20 +1,62 @@
-const crypto = require('crypto');
-const EventEmitter = require('events').EventEmitter;
-const BN = require('bn.js');
-const SDK = require('gridplus-sdk');
-const EthTx = require('@ethereumjs/tx');
-const { addHexPrefix } = require("@ethereumjs/util");
-const rlp = require('rlp');
+import crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import BN from 'bn.js';
+import * as SDK from 'gridplus-sdk';
+import * as EthTx from '@ethereumjs/tx';
+import { addHexPrefix } from '@ethereumjs/util';
+import rlp from 'rlp';
+
+declare const browser: any;
+
 const keyringType = 'Lattice Hardware';
 const HARDENED_OFFSET = 0x80000000;
 const PER_PAGE = 5;
-const CLOSE_CODE = -1000;
 const STANDARD_HD_PATH = `m/44'/60'/0'/0/x`;
 const SDK_TIMEOUT = 120000;
 const CONNECT_TIMEOUT = 20000;
 
+type KeyringCredentials = {
+  deviceID: string | null;
+  password: string | null;
+  endpoint: string | null;
+};
+
+type AccountOption = {
+  walletUID: string | Buffer | null;
+  hdPath: string;
+};
+
+type DeserializeOptions = {
+  hdPath?: string;
+  creds?: KeyringCredentials;
+  accounts?: string[];
+  accountIndices?: number[];
+  accountOpts?: AccountOption[];
+  walletUID?: string | Buffer | null;
+  name?: string;
+  appName?: string;
+  network?: string | null;
+  page?: number;
+};
+
 class LatticeKeyring extends EventEmitter {
-  constructor (opts={}) {
+  static type = keyringType;
+  type: string;
+  accounts: string[];
+  accountIndices: number[];
+  accountOpts: AccountOption[];
+  isLocked: boolean;
+  creds: KeyringCredentials;
+  walletUID: string | Buffer | null;
+  sdkSession: any;
+  page: number;
+  unlockedAccount: number;
+  network: string | null;
+  hdPath: string;
+  appName?: string;
+  name?: string;
+
+  constructor (opts: DeserializeOptions = {}) {
     super()
     this.type = keyringType;
     this._resetDefaults();
@@ -24,7 +66,7 @@ class LatticeKeyring extends EventEmitter {
   //-------------------------------------------------------------------
   // Keyring API (per `https://github.com/MetaMask/eth-simple-keyring`)
   //-------------------------------------------------------------------
-  async deserialize (opts = {}) {
+  async deserialize (opts: DeserializeOptions = {}) {
     if (opts.hdPath)
       this.hdPath = opts.hdPath;
     if (opts.creds)
@@ -168,7 +210,14 @@ class LatticeKeyring extends EventEmitter {
     // Build the signing request
     if (fwVersion.major > 0 || fwVersion.minor >= 15) {
       // Newer firmware versions support an easier pathway
-      const data = {
+      const data: {
+        payload: any;
+        curveType: number;
+        hashType: number;
+        encodingType: number;
+        signerPath: number[];
+        decoder?: unknown;
+      } = {
         // Legacy transactions return tx params. Newer transactions
         // return the raw, serialized transaction
         payload:  tx._type ?
@@ -460,11 +509,11 @@ class LatticeKeyring extends EventEmitter {
     return tabs.find((tab) => tab.id === id);
   }
 
-  _getCreds() {
-    return new Promise((resolve, reject) => {
+  _getCreds(): Promise<KeyringCredentials | undefined> {
+    return new Promise<KeyringCredentials | undefined>((resolve, reject) => {
       // We only need to setup if we don't have a deviceID
       if (this._hasCreds())
-        return resolve();
+        return resolve(undefined);
       // If we are not aware of what Lattice we should be talking to,
       // we need to open a window that lets the user go through the
       // pairing or connection process.
@@ -482,7 +531,7 @@ class LatticeKeyring extends EventEmitter {
           // Stop the listener
           clearInterval(listenInterval);
           // Parse and return creds
-          const creds = JSON.parse(event.data);
+          const creds = JSON.parse(event.data) as KeyringCredentials;
           if (!creds.deviceID || !creds.password)
             return reject(new Error('Invalid credentials returned from Lattice.'));
           return resolve(creds);
@@ -570,7 +619,15 @@ class LatticeKeyring extends EventEmitter {
     let url = 'https://signing.gridpl.us';
     if (this.creds.endpoint)
       url = this.creds.endpoint
-    let setupData = {
+    let setupData: {
+      name: string | undefined;
+      baseUrl: string;
+      timeout: number;
+      privKey: Buffer;
+      network: string | null;
+      skipRetryOnWrongWallet: boolean;
+      stateData?: string;
+    } = {
       name: this.appName,
       baseUrl: url,
       timeout: SDK_TIMEOUT,
@@ -765,14 +822,4 @@ function getLegacyTxReq (tx) {
   return txData;
 }
 
-async function httpRequest (url) {
-  const resp = await window.fetch(url);
-  if (resp.ok) {
-    return await resp.text();
-  } else {
-    throw new Error('Failed to make request: ', resp.status);
-  }
-}
-
-LatticeKeyring.type = keyringType
-module.exports = LatticeKeyring;
+export default LatticeKeyring;
