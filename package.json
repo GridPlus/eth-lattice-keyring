@@ -1,9 +1,25 @@
 {
   "name": "eth-lattice-keyring",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Keyring for connecting to the Lattice1 hardware wallet",
-  "main": "index.js",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
+    "build": "tsup",
+    "prepare": "npm run build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -18,10 +34,15 @@
   "homepage": "https://github.com/GridPlus/eth-lattice-keyring#readme",
   "dependencies": {
     "@ethereumjs/tx": "^4.2.0",
-    "bn.js": "^5.2.0",
     "@ethereumjs/util": "^8.0.0",
     "@noble/secp256k1": "^1.7.0",
+    "bn.js": "^5.2.0",
     "gridplus-sdk": "^3.4.0",
     "rlp": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3"
   }
 }
