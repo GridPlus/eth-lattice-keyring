@@ -37,7 +37,7 @@
     "@ethereumjs/util": "^8.0.0",
     "@noble/secp256k1": "^1.7.0",
     "bn.js": "^5.2.0",
-    "gridplus-sdk": "^3.4.0",
+    "gridplus-sdk": "^4.0.0",
     "rlp": "^3.0.0"
   },
   "devDependencies": {
