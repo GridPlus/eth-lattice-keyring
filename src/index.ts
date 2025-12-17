@@ -48,7 +48,7 @@ class LatticeKeyring extends EventEmitter {
   isLocked: boolean;
   creds: KeyringCredentials;
   walletUID: string | Buffer | null;
-  sdkSession: any;
+  sdkSession: SDK.Client;
   page: number;
   unlockedAccount: number;
   network: string | null;
@@ -216,7 +216,7 @@ class LatticeKeyring extends EventEmitter {
         hashType: number;
         encodingType: number;
         signerPath: number[];
-        decoder?: unknown;
+        decoder?: Buffer;
       } = {
         // Legacy transactions return tx params. Newer transactions
         // return the raw, serialized transaction
@@ -306,14 +306,14 @@ class LatticeKeyring extends EventEmitter {
         signerPath: this._getHDPathIndices(addressParentPath, addressIdx),
       },
     };
-    const res = await this.sdkSession.sign(req);
+    const res = await this.sdkSession.sign(req as Parameters<typeof this.sdkSession.sign>[0]);
     if (!res.sig) {
       throw new Error("No signature returned");
     }
     // Convert the `v` to a number. It should convert to 0 or 1
     let v;
     try {
-      v = res.sig.v.toString("hex");
+      v = res.sig.v.toString(16);
       if (v.length < 2) {
         v = `0${v}`;
       }
