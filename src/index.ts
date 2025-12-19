@@ -15,6 +15,32 @@ const STANDARD_HD_PATH = `m/44'/60'/0'/0/x`;
 const SDK_TIMEOUT = 120000;
 const CONNECT_TIMEOUT = 20000;
 
+const stripHexPrefix = (hex: string) =>
+  hex.toLowerCase().startsWith('0x') ? hex.slice(2) : hex;
+
+const normalizeHex = (value: unknown): string => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return stripHexPrefix(value);
+  if (typeof value === 'number') return value.toString(16);
+  if (typeof value === 'bigint') return value.toString(16);
+  if (BN.isBN(value)) return (value as BN).toString(16);
+  if (Buffer.isBuffer(value)) return value.toString('hex');
+  if (value instanceof Uint8Array) return Buffer.from(value).toString('hex');
+  const stringValue = (value as any)?.toString?.();
+  return typeof stringValue === 'string' ? stripHexPrefix(stringValue) : '';
+};
+
+const normalizeVHex = (value: unknown): string => {
+  if (value === null || value === undefined) return '0';
+  if (Buffer.isBuffer(value))
+    return value.length === 0 ? '0' : value.toString('hex');
+  const hex = normalizeHex(value);
+  return hex.length === 0 ? '0' : hex;
+};
+
+const normalizeSigPart = (value: unknown, bytes: number): string =>
+  normalizeHex(value).padStart(bytes * 2, '0');
+
 type KeyringCredentials = {
   deviceID: string | null;
   password: string | null;
@@ -250,10 +276,10 @@ class LatticeKeyring extends EventEmitter {
     // Construct the `v` signature param
     if (signedTx.sig.v === undefined) {
       // V2 signature needs `v` calculated
-      v = SDK.Utils.getV(tx, signedTx);
+      v = normalizeVHex(SDK.Utils.getV(tx, signedTx));
     } else {
       // Legacy signatures have `v` in the response
-      v = signedTx.sig.v.length === 0 ? '0' : signedTx.sig.v.toString('hex')
+      v = normalizeVHex(signedTx.sig.v);
     }
 
     // Pack the signature into the return object
@@ -313,7 +339,7 @@ class LatticeKeyring extends EventEmitter {
     // Convert the `v` to a number. It should convert to 0 or 1
     let v;
     try {
-      v = res.sig.v.toString(16);
+      v = normalizeVHex(res.sig.v);
       if (v.length < 2) {
         v = `0${v}`;
       }
@@ -330,7 +356,9 @@ class LatticeKeyring extends EventEmitter {
       );
     }
     // Return the sig string
-    return `0x${res.sig.r}${res.sig.s}${v}`;
+    const r = normalizeSigPart(res.sig.r, 32);
+    const s = normalizeSigPart(res.sig.s, 32);
+    return `0x${r}${s}${v}`;
   }
 
   async exportAccount(address) {
