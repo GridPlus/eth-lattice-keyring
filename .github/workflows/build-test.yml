@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    name: Typecheck & Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      INTERNAL_EVENT: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20.x
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm exec tsc -- --noEmit
+
+      - name: Build project
+        run: npm run build
+
+      - name: Release a nightly build
+        if: env.INTERNAL_EVENT == 'true'
+        run: npx pkg-pr-new publish
